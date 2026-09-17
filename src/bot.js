@@ -209,7 +209,7 @@ bot.command("positions", async (ctx) => {
 });
 
 bot.command("sell", async (ctx) => {
-  const positions = await getPaperPositions;
+  const positions = await getPaperPositions(ctx.from.id);
   if (!positions.length) {
     return ctx.reply("No open paper position to sell");
   }
