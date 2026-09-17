@@ -208,6 +208,21 @@ bot.command("positions", async (ctx) => {
   );
 });
 
+bot.command("sell", async (ctx) => {
+  const positions = await getPaperPositions;
+  if (!positions.length) {
+    return ctx.reply("No open paper position to sell");
+  }
+
+  const buttons = positions.map((p) => [
+    Markup.button.callback(
+      `#${p.id}- ${p.symbol}(${Number(p.amount_tokens).toFixed(2)})`,
+      `sell_menu_${p.id}`,
+    ),
+  ]);
+  return ctx.reply("Which position would you like to sell?", Markup.inlineKeyboard(buttons));
+});
+
 bot.command("chat", async (ctx) => {
   await setMode(ctx.chat.id, "chat");
   await ctx.reply(`💬 chat mode is on`);
