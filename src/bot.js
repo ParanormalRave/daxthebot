@@ -19,6 +19,7 @@ import {
   getTokenInfoWithFallback,
   getPriceHistory,
   getTokenAge,
+  getPairInfo,  
 } from "./lib/dexscreener.js";
 import { saveMessagesToPostgres } from "./lib/conversations.js";
 import {
@@ -251,6 +252,7 @@ async function executeBuy(ctx, solAmount) {
     const result = await paperBuy(
       ctx.from.id,
       pending.tokenAddress,
+      pending.pairAddress,
       info.symbol,
       solAmount,
       info.priceUsd,
@@ -326,7 +328,7 @@ bot.action(/^refresh_pos_(\d+)$/, async (ctx) => {
     const position = positions.find((p) => p.id === positionId);
     if (!position) return ctx.answerCbQuery("Position not found");
 
-    const info = await getTokenInfoWithFallback(position.token_address);
+    const info = await getPairInfo(position.pair_address);
     if (!info) return ctx.answerCbQuery("Could not fetch price");
 
     const currentPriceUsd = Number(info.priceUsd);
@@ -487,7 +489,7 @@ bot.on("text", async (ctx, next) => {
   const mode = await getMode(ctx.chat.id);
   if (mode === "trading") return handleTradingInput(ctx);
   return next();
-});
+});w
 
 bot.on("message", async (ctx) => {
   const userMessage = ctx.message.text;

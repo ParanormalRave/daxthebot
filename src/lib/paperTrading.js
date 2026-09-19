@@ -19,6 +19,7 @@ export async function getPaperBalance(telegramUserId) {
 export async function paperBuy(
   telegramUserId,
   tokenAddress,
+  pairAddress,
   symbol,
   solAmount,
   tokenPriceUsd,
@@ -56,6 +57,7 @@ export async function paperBuy(
       [
         telegramUserId,
         tokenAddress,
+        pairAddress,
         symbol,
         tokensReceived,
         tokenPriceUsd,
