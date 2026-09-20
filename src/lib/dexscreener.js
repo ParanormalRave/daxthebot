@@ -25,6 +25,21 @@ const getTokeninfo = async (address) => {
   }
 }
 
+export async function getPairInfo(pairAddress) {
+  const res = await fetch(`https://api.dexscreener.com/latest/dex/pairs/solana/${pairAddress}`)
+  const data = await res.json()
+  const pair = data.pair ?? data.pairs?.[0]
+  if (!pair) return null
+  return {
+    priceUsd: pair.priceUsd,
+    priceChange24h: pair.priceChange?.h24,
+    liquidityUsd: pair.liquidity?.usd,
+    volume24h: pair.volume?.h24,
+    marketCap: pair.marketCap ?? null,
+    imageUrl: pair.info?.imageUrl ?? default_token_image,
+  }
+}
+
 export async function getTokenInfoWithFallback(address) {
   try {
     const dex = await getTokeninfo(address)
@@ -46,6 +61,7 @@ export async function getTokenInfoWithFallback(address) {
     priceUsd: attrs?.price_usd,
     marketCap: attrs?.market_cap_usd,
     imageUrl: attrs?.image_url ?? default_token_image,
+    pairAddress: poolAddress,
     source: `geckoterminal`,
   }
 }
