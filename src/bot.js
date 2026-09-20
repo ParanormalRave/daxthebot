@@ -489,7 +489,7 @@ bot.on("text", async (ctx, next) => {
   const mode = await getMode(ctx.chat.id);
   if (mode === "trading") return handleTradingInput(ctx);
   return next();
-});w
+});
 
 bot.on("message", async (ctx) => {
   const userMessage = ctx.message.text;
