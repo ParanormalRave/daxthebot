@@ -53,7 +53,7 @@ export async function paperBuy(
     );
 
     const inserted = await client.query(
-      "INSERT INTO paper_positions (telegram_user_id, token_address, symbol, amount_tokens, entry_price, sol_spent) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
+      "INSERT INTO paper_positions (telegram_user_id, token_address, pair_address, symbol, amount_tokens, entry_price, sol_spent) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id",
       [
         telegramUserId,
         tokenAddress,
