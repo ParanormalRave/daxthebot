@@ -19,7 +19,7 @@ import {
   getTokenInfoWithFallback,
   getPriceHistory,
   getTokenAge,
-  getPairInfo,  
+  getPairInfo,
 } from "./lib/dexscreener.js";
 import { saveMessagesToPostgres } from "./lib/conversations.js";
 import {
@@ -221,7 +221,10 @@ bot.command("sell", async (ctx) => {
       `sell_menu_${p.id}`,
     ),
   ]);
-  return ctx.reply("Which position would you like to sell?", Markup.inlineKeyboard(buttons));
+  return ctx.reply(
+    "Which position would you like to sell?",
+    Markup.inlineKeyboard(buttons),
+  );
 });
 
 bot.command("chat", async (ctx) => {
@@ -259,17 +262,33 @@ async function executeBuy(ctx, solAmount) {
       solPriceUsd,
     );
 
-    return ctx.reply(
-      `✍️ Bought${result.tokensReceived.toFixed(2)} ${info.symbol}\nSpent: ${solAmount} SOL\nBalance: ${result.newBalance.toFixed(4)} SOL\n\nEntry: $${info.priceUsd}\nCurrent: $${info.priceUsd}\nPnL: $0.00 (0.00%)`,
-      Markup.inlineKeyboard([
-        [
-          Markup.button.callback(
-            "🔃 refresh",
-            `refresh_pos_${result.positionId}`,
-          ),
-          Markup.button.callback("💰sell", `sell_menu_${result.positionId}`),
-        ],
-      ]),
+    const positionCard = await generateTokenIntroCard({
+      name: info.name,
+      symbol: info.symbol,
+      bannerUrl: info.imageUrl,
+      marketCap: info.marketCap,
+      volume24h: info.volume24h,
+      liquidityUsd: info.liquidityUsd,
+      priceChangePercent: info.priceChange24h,
+    });
+
+    const caption = `✅ Bought ${result.tokensReceived.toFixed(2)} ${info.symbol}\nSpent: ${solAmount} SOL\nBalance: ${result.newBalance.toFixed(4)} SOL\n\nEntry: $${info.priceUsd}\nCurrent: $${info.priceUsd}\nPnL: $0.00 (0.00%)`;
+
+    return ctx.replyWithPhoto(
+      { source: positionCard },
+      {
+        caption,
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+          [
+            Markup.button.callback(
+              "🔃 refresh",
+              `refresh_pos_${result.positionId}`,
+            ),
+            Markup.button.callback("💰sell", `sell_menu_${result.positionId}`),
+          ],
+        ]),
+      },
     );
   } catch (err) {
     console.error("failed buy", err);
@@ -343,7 +362,7 @@ bot.action(/^refresh_pos_(\d+)$/, async (ctx) => {
       ((currentPriceUsd - entryPriceUsd) / entryPriceUsd) * 100;
 
     await ctx.answerCbQuery("Refreshed");
-    await ctx.editMessageText(
+    await ctx.editMessageCaption(
       `📝 ${position.symbol}\nAmount: ${amountTokens.toFixed(2)}\n\nEntry: $${entryPriceUsd}\nCurrent: $${currentPriceUsd}\nPnL: $${pnlUsd.toFixed(2)} (${pnlPercent.toFixed(2)}%)`,
       Markup.inlineKeyboard([
         [
@@ -386,7 +405,7 @@ bot.action(/^sell_pct_(\d+)_(\d+)$/, async (ctx) => {
     const position = positions.find((p) => p.id === positionId);
     if (!position) return ctx.reply("Position not found");
 
-    const info = await getTokenInfoWithFallback(position.token_address);
+    const info = await getPairInfo(position.pair_address);
     if (!info) return ctx.reply("Could not fetch price");
     const result = await paperSellPercentage(
       ctx.from.id,
@@ -647,48 +666,32 @@ async function handleTradingInput(ctx) {
           priceChangePercent: info.priceChange24h,
         });
       }
-
-      if (priceHistory && priceHistory.length > 0) {
-        const chartBuffer = await generateCandleStickChart(priceHistory);
-        const priceChangeEmoji = info.priceChange24h >= 0 ? "🟢" : "🔴";
-        await setChartState(ctx.chat.id, {
-          symbol: info.symbol,
-          currentPrice: info.priceUsd,
-          priceChangeEmoji,
-          priceChangePercent: info.priceChange24h,
-        });
-        return ctx.replyWithPhoto(
-          { source: introCard },
-          {
-            caption: message,
-            parse_mode: "Markdown",
-            ...Markup.inlineKeyboard([
-              ...(hasChartData
-                ? [
-                    [
-                      Markup.button.callback("5M", "tf_5m"),
-                      Markup.button.callback("15M", "tf_15m"),
-                      Markup.button.callback("1H", "tf_1h"),
-                    ],
-                    [
-                      Markup.button.callback("4H", "tf_4h"),
-                      Markup.button.callback("1D", "tf_1d"),
-                    ],
-                  ]
-                : []),
-              [
-                Markup.button.callback("💰 Buy", "show_buy"),
-                Markup.button.callback("📊 Positions", "show_positions"),
-              ],
-              ...buildTokenLinkRows(text, info.pairAddress),
-            ]),
-          },
-        );
-      }
-
-      return ctx.replyWithMarkdown(
-        message,
-        Markup.inlineKeyboard(buildTokenLinkRows(text, info.pairAddress)),
+      return ctx.replyWithPhoto(
+        { source: introCard },
+        {
+          caption: message,
+          parse_mode: "Markdown",
+          ...Markup.inlineKeyboard([
+            ...(hasChartData
+              ? [
+                  [
+                    Markup.button.callback("5M", "tf_5m"),
+                    Markup.button.callback("15M", "tf_15m"),
+                    Markup.button.callback("1H", "tf_1h"),
+                  ],
+                  [
+                    Markup.button.callback("4H", "tf_4h"),
+                    Markup.button.callback("1D", "tf_1d"),
+                  ],
+                ]
+              : []),
+            [
+              Markup.button.callback("💰 Buy", "show_buy"),
+              Markup.button.callback("📊 Positions", "show_positions"),
+            ],
+            ...buildTokenLinkRows(text, info.pairAddress),
+          ]),
+        },
       );
     } else {
       return ctx.reply(
