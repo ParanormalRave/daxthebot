@@ -16,6 +16,10 @@ export async function getPaperBalance(telegramUserId) {
   return Number(result?.rows[0]?.sol_balance || null);
 }
 
+if (!Number.isFinite(solPriceUsd) || solPriceUsd <= 0)
+  throw new Error('Invalid SOL price')
+if (!Number.isFinite(Number(tokenPriceUsd)) || Number(tokenPriceUsd) <= 0)
+  throw new Error('Invalid token price')
 export async function paperBuy(
   telegramUserId,
   tokenAddress,
@@ -87,7 +91,18 @@ export async function getPaperPositions(telegramUserId) {
   return result?.rows || null;
 }
 
-export async function paperSellPercentage(telegramUserId, positionId, percent, currentPriceUsd, solPriceUsd){
+export async function paperSellPercentage(
+  telegramUserId,
+  positionId,
+  percent,
+  currentPriceUsd,
+  solPriceUsd,
+) {
+  if (!Number.isFinite(currentPriceUsd) || currentPriceUsd <= 0)
+    throw new Error('Invalid current token price')
+  if (!Number.isFinite(solPriceUsd) || solPriceUsd <= 0)
+    throw new Error('Invalid SOL price')
+
   const client = await db.connect()
   try {
     await client.query('BEGIN')
@@ -101,10 +116,14 @@ export async function paperSellPercentage(telegramUserId, positionId, percent, c
     const fraction = percent / 100
     const tokensToSell = Number(position.amount_tokens) * fraction
     const solSpentPortion = Number(position.sol_spent) * fraction
+    const entryPriceUsd = Number(position.entry_price)
 
-    const currentValueUsd = tokensToSell * currentPriceUsd
-    const solReceived = currentValueUsd / solPriceUsd
-    const pnlUsd = currentValueUsd - solSpentPortion * solPriceUsd
+    // token moved by this ratio since entry, SOL proceeds move by the same ratio
+    const priceRatio = currentPriceUsd / entryPriceUsd
+    const solReceived = solSpentPortion * priceRatio
+    const pnlSol = solReceived - solSpentPortion
+    const pnlPercent = (priceRatio - 1) * 100
+    const pnlUsd = pnlSol * solPriceUsd // display only
 
     await client.query(
       'UPDATE paper_balances SET sol_balance = sol_balance + $1 WHERE telegram_user_id = $2',
@@ -121,7 +140,7 @@ export async function paperSellPercentage(telegramUserId, positionId, percent, c
     }
 
     await client.query('COMMIT')
-    return { solReceived, pnlUsd }
+    return { solReceived, pnlSol, pnlPercent, pnlUsd }
   } catch (err) {
     await client.query('ROLLBACK')
     throw err
@@ -129,20 +148,3 @@ export async function paperSellPercentage(telegramUserId, positionId, percent, c
     client.release()
   }
 }
-
-// old code being replaced with sell percentage
-// export async function paperSell(telegramUserId, positionId, currentPriceUsd, solPriceUsd) {
-//     const result = await db.query('SELECT * FROM paper_positions WHERE id = $1 AND telegram_user_id = $2', [positionId, telegramUserId])
-//     const position = result?.rows[0] || null
-
-//     if(!position) throw new Error("position not found");
-
-//     const currentValueUsd = Number(position.amount_tokens) * currentPriceUsd
-//     const solReceived = currentValueUsd / solPriceUsd
-//     const pnlUsd = currentValueUsd - Number(position.sol_spent) * solPriceUsd
-
-//     await db.query('UPDATE paper_balances SET sol_balance = sol_balance + $1 WHERE telegram_user_id = $2', [solReceived, telegramUserId])
-//     await db.query('DELETE FROM paper_positions WHERE id = $1', [positionId])
-
-//     return {solReceived, pnlUsd}
-// }

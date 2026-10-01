@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
 dotenv.config();
 import { Telegraf, Markup } from "telegraf";
+import { getSolPriceUsd } from "./lib/solPaperPrice.js";
 import { Groq } from "groq-sdk";
 import {
   getSession,
@@ -251,11 +252,11 @@ async function executeBuy(ctx, solAmount) {
     const info = await getTokenInfoWithFallback(pending.tokenAddress);
     if (!info) return ctx.reply("Could not find data");
 
-    const solPriceUsd = 100;
+    const solPriceUsd = await getSolPriceUsd();
     const result = await paperBuy(
       ctx.from.id,
       pending.tokenAddress,
-      pending.pairAddress,
+      info.pairAddress ?? pending.pairAddress,
       info.symbol,
       solAmount,
       info.priceUsd,
@@ -353,11 +354,9 @@ bot.action(/^refresh_pos_(\d+)$/, async (ctx) => {
     const currentPriceUsd = Number(info.priceUsd);
     const entryPriceUsd = Number(position.entry_price);
     const amountTokens = Number(position.amount_tokens);
-    const solSpent = Number(position.sol_spent);
-    const solPriceUsd = 100;
 
-    const currentValueUsd = amountTokens * currentPriceUsd;
-    const pnlUsd = currentValueUsd - solSpent * solPriceUsd;
+
+    const pnlUsd = amountTokens(currentPriceUsd - entryPriceUsd);
     const pnlPercent =
       ((currentPriceUsd - entryPriceUsd) / entryPriceUsd) * 100;
 
@@ -407,12 +406,13 @@ bot.action(/^sell_pct_(\d+)_(\d+)$/, async (ctx) => {
 
     const info = await getPairInfo(position.pair_address);
     if (!info) return ctx.reply("Could not fetch price");
+    const solPriceUsd = await getSolPriceUsd();
     const result = await paperSellPercentage(
       ctx.from.id,
       positionId,
       percent,
       Number(info.priceUsd),
-      150,
+      solPriceUsd,  
     );
     return ctx.reply(
       `📃 Sold ${percent}% — Received: ${result.solReceived.toFixed(4)} SOL\nP&L: $${result.pnlUsd.toFixed(2)}`,
