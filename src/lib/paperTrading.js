@@ -16,10 +16,10 @@ export async function getPaperBalance(telegramUserId) {
   return Number(result?.rows[0]?.sol_balance || null);
 }
 
-if (!Number.isFinite(solPriceUsd) || solPriceUsd <= 0)
-  throw new Error('Invalid SOL price')
-if (!Number.isFinite(Number(tokenPriceUsd)) || Number(tokenPriceUsd) <= 0)
-  throw new Error('Invalid token price')
+  // if (!Number.isFinite(solPriceUsd) || solPriceUsd <= 0)
+  //   throw new Error('Invalid SOL price')
+  // if (!Number.isFinite(Number(tokenPriceUsd)) || Number(tokenPriceUsd) <= 0)
+  //   throw new Error('Invalid token price')
 export async function paperBuy(
   telegramUserId,
   tokenAddress,
