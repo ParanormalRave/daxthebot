@@ -7,19 +7,22 @@ if (!process.env.WALLET_ENCRYPTION_KEY) {
   throw new Error('WALLET_ENCRYPTION_KEY is not set — wallet features cannot run without it')
 }
 const ENCRYPTION_KEY = Buffer.from(process.env.WALLET_ENCRYPTION_KEY, 'hex')
+if (ENCRYPTION_KEY.length !== 32){
+    throw new Error('WALLET_ENCRYPTION_KEY must be 64 hex characters (32 bytes)')
+}
 
 export const generateWallet = () => {
     const keypair = Keypair.generate()
     return{
         publicKey: keypair.publicKey.toString(),
-        secretKey: keypair.secretKey.toString()
+        secretKey: Buffer.from(keypair.secretKey).toString("hex")
     }
 }
 
 export function encryptSecretKey(secretKey){
     const iv = crypto.randomBytes(12)
     const cipher = crypto.createCipheriv('aes-256-gcm', ENCRYPTION_KEY, iv)
-    const encrypted = Buffer.concat([cipher.update(Buffer.from(secretKey)),cipher.final()])
+    const encrypted = Buffer.concat([cipher.update(Buffer.from(secretKey, 'hex')),cipher.final()])
     const authTag = cipher.getAuthTag()
 
     return{
