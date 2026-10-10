@@ -44,8 +44,29 @@ import {
 } from "./lib/paperTrading.js";
 import { generateTokenIntroCard } from "./lib/cards.js";
 
-export const bot = new Telegraf(process.env.BOT_TOKEN);
+export const bot = new Telegraf(process.env.BOT_TOKEN, {
+  handlerTimeout: 60_000,
+});
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const withTimeout = (promise, ms, label) => {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${ms / 1000}s`)),
+      ms,
+    );
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+};
+
+bot.catch(async (err, ctx) => {
+  console.error(`Error on update ${ctx.update?.update_id}:`, err.message);
+  try {
+    await ctx.reply(
+      "⚠️ That took too long or something broke. Try again in a moment.",
+    );
+  } catch {}
+});
 
 const systemPrompt = `
 You are **Dax**, a personal assistant created by ParanormalRave,also known as *Mummy Rave*.
@@ -355,8 +376,7 @@ bot.action(/^refresh_pos_(\d+)$/, async (ctx) => {
     const entryPriceUsd = Number(position.entry_price);
     const amountTokens = Number(position.amount_tokens);
 
-
-    const pnlUsd = amountTokens(currentPriceUsd - entryPriceUsd);
+    const pnlUsd = amountTokens * (currentPriceUsd - entryPriceUsd);
     const pnlPercent =
       ((currentPriceUsd - entryPriceUsd) / entryPriceUsd) * 100;
 
@@ -412,7 +432,7 @@ bot.action(/^sell_pct_(\d+)_(\d+)$/, async (ctx) => {
       positionId,
       percent,
       Number(info.priceUsd),
-      solPriceUsd,  
+      solPriceUsd,
     );
     return ctx.reply(
       `📃 Sold ${percent}% — Received: ${result.solReceived.toFixed(4)} SOL\nP&L: $${result.pnlUsd.toFixed(2)}`,
@@ -584,7 +604,12 @@ async function handleTradingInput(ctx) {
     const solanaAddressRegex = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
     if (solanaAddressRegex.test(text)) {
-      const info = await getTokenInfoWithFallback(text);
+      await ctx.reply("🔎 Checking that token…");
+      const info = await withTimeout(
+        getTokenInfoWithFallback(text),
+        12_000,
+        "token info",
+      );
       if (!info)
         return ctx.reply("Damn....urgh no data found for this address");
       if (!info.pairAddress) {
@@ -597,18 +622,22 @@ async function handleTradingInput(ctx) {
         pairAddress: info.pairAddress,
       });
       const [authority, holders, holderCount] = await Promise.all([
-        getTokenAuthority(text).catch((err) => {
-          console.error("mint and freeze failed", err.message);
-          return null;
-        }),
-        getTopHolders(text).catch((err) => {
+        withTimeout(getTokenAuthority(text), 12_000, "authority").catch(
+          (err) => {
+            console.error("mint and freeze failed", err.message);
+            return null;
+          },
+        ),
+        withTimeout(getTopHolders(text), 12_000, "top holders").catch((err) => {
           console.error("Get top holders failed ", err.message);
           return null;
         }),
-        getHolderConditions(text).catch((err) => {
-          console.error("get holders failed", err.message);
-          return null;
-        }),
+        withTimeout(getHolderConditions(text), 20_000, "holders").catch(
+          (err) => {
+            console.error("get holders failed", err.message);
+            return null;
+          },
+        ),
       ]);
 
       // const walletRecord = await getWallet(ctx.from.id)
@@ -626,6 +655,9 @@ async function handleTradingInput(ctx) {
           : authority.isFreezable
             ? "⚠ warning"
             : "✔ Renounced";
+      const holdersText = holderCount
+        ? `${holderCount.count.toLocaleString()}${holderCount.capped ? "+" : ""}`
+        : "N/A";
       const top10Holders = holders ? `${holders.top10Percentage}%` : "N/A";
       const message = `
       📊 *${info.name}* (${info.symbol})
@@ -640,7 +672,7 @@ async function handleTradingInput(ctx) {
 
       🔐 Mint Authority: ${mintStatus}
       🥶 Freeze Authority: ${freezeStatus}
-      👥 Holders: ${holderCount ?? "N/A"}
+      👥 Holders: ${holdersText}
       🔝 Top 10 Hold: ${top10Holders}
     `.trim();
 
@@ -653,9 +685,12 @@ async function handleTradingInput(ctx) {
         liquidityUsd: info.liquidityUsd,
         priceChangePercent: info.priceChange24h,
       });
-      const priceHistory = await getPriceHistory(info.pairAddress).catch(
-        () => null,
-      );
+
+      const priceHistory = await withTimeout(
+        getPriceHistory(info.pairAddress),
+        8_000,
+        "price history",
+      ).catch(() => null);
 
       const hasChartData = priceHistory && priceHistory.length > 0;
       if (hasChartData) {

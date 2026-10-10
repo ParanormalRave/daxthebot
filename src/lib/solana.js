@@ -78,43 +78,28 @@ export async function checkLiquidityBurnStatus(lpMintAddress) {
   };
 }
 
-export async function getTopHolders(tokenAddress) {
-  const mintAddress = new PublicKey(tokenAddress);
-  const largestAccounts = await connection.getTokenLargestAccounts(mintAddress);
-
-  const top10 = largestAccounts.value.slice(0, 10);
-  const totalSupply = await connection.getTokenSupply(mintAddress);
-
-  const top10WithOwners = await Promise.all(
-    top10.map(async (acc) => {
-      const accountInfo = await connection.getParsedAccountInfo(acc.address);
-      const owner = accountInfo.value?.data?.parsed?.info?.owner;
-      return { owner, amount: acc.amount };
-    }),
-  );
-
-  const top10supply = top10.reduce((sum, acc) => sum + Number(acc.amount), 0);
-  const totalSupplyAmount = Number(totalSupply.value.amount);
-  const tenPercent = (top10supply / totalSupplyAmount) * 100;
-
-  return {
-    top10Holders: top10WithOwners.map((acc) => ({
-      address: acc.owner ?? "Unknown",
-      balance: acc.amount,
-    })),
-    top10Percentage: tenPercent.toFixed(2),
-  };
-}
+const MAX_PAGES = 20;            // 20 pages x 1000 accounts = counts up to 20,000 holders
+const MAX_TIME_MS = 15_000;      // stop paging after 15 seconds in total
+const REQUEST_TIMEOUT_MS = 8_000; // give up on any single request after 8 seconds
 
 export async function getHolderConditions(tokenAddress) {
   let cursor = null;
   const owners = new Set();
+  const deadline = Date.now() + MAX_TIME_MS;
+  let pages = 0;
+  let capped = false;
 
   while (true) {
+    if (pages >= MAX_PAGES || Date.now() > deadline) {
+      capped = true; // there were more pages, we just stopped early
+      break;
+    }
+    pages++;
+
     const body = {
-      jsonrpc: "2.0", // FIX: was "jsonprc" (typo, invalid JSON-RPC field name)
+      jsonrpc: "2.0",
       id: "holder account",
-      method: "getTokenAccounts", // FIX: was "getTokensAccount" (not a real Helius method)
+      method: "getTokenAccounts",
       params: {
         mint: tokenAddress,
         limit: 1000,
@@ -125,16 +110,19 @@ export async function getHolderConditions(tokenAddress) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
+    if (!res.ok) throw new Error(`Helius returned ${res.status}`);
     const data = await res.json();
-    const accounts = data.result?.token_accounts ?? [];
+    if (data.error) throw new Error(`Helius error: ${data.error.message}`);
 
-    if (accounts.length === 0) break; // FIX: was "account.length" (undefined variable)
+    const accounts = data.result?.token_accounts ?? [];
+    if (accounts.length === 0) break;
 
     for (const acc of accounts) owners.add(acc.owner);
 
-    cursor = data.result?.cursor; // FIX: cursor was never updated, so pagination never advanced
+    cursor = data.result?.cursor;
     if (!cursor) break;
   }
-  return owners.size;
+  return { count: owners.size, capped };
 }
