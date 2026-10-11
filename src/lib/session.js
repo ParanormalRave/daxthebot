@@ -1,5 +1,4 @@
 //redis connection
-import { message } from 'telegraf/filters'
 import { redis } from './redis.js'
 const TTL = 86400 //store an days worth of time 
 // used to get the session id of each chat and return the data in an array form if it exists
@@ -79,5 +78,15 @@ export async function setAwaitingCustomAmount(chatId, waiting){
 export async function getAwaitingCustomAmount(chatId){
   const val = await redis.get(`awaiting_custom:${chatId}`)
   return val === '1' || val === 1
+}
+
+export async function setAccountMode(userId, mode) {
+  if (mode === 'real') await redis.set(`account:${userId}`, 'real', { ex: 3600 })
+  else await redis.del(`account:${userId}`)
+}
+
+export async function getAccountMode(userId) {
+  const val = await redis.get(`account:${userId}`)
+  return val === 'real' ? 'real' : 'paper'
 }
 

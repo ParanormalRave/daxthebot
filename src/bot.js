@@ -15,6 +15,8 @@ import {
   setChartState,
   setAwaitingCustomAmount,
   getAwaitingCustomAmount,
+  setAccountMode,
+  getAccountMode,
 } from "./lib/session.js";
 import {
   getTokenInfoWithFallback,
@@ -25,6 +27,7 @@ import {
 import { saveMessagesToPostgres } from "./lib/conversations.js";
 import {
   connection,
+  getBalance,
   getTokenAuthority,
   getTopHolders,
   getHolderConditions,
@@ -67,6 +70,57 @@ bot.catch(async (err, ctx) => {
     );
   } catch {}
 });
+
+async function accountSummary(ctx) {
+  const mode = await getAccountMode(ctx.from.id);
+  if (mode === "real") {
+    const wallet = await getWallet(ctx.from.id);
+    if (!wallet)
+      return {
+        mode,
+        label: "💵 REAL",
+        line: "💵 REAL · no wallet yet (send /wallet)",
+      };
+    const sol = await withTimeout(
+      getBalance(wallet.public_key),
+      8_000,
+      "balance",
+    ).catch(() => null);
+    return {
+      mode,
+      label: "💵 REAL",
+      line: `💵 REAL · ${sol === null ? "balance unavailable" : sol.toFixed(4) + " SOL"}`,
+    };
+  }
+  const sol = await getPaperBalance(ctx.from.id);
+  return { mode, label: "📝 PAPER", line: `📝 PAPER · ${sol.toFixed(4)} SOL` };
+}
+
+const accountButtons = (mode) =>
+  Markup.inlineKeyboard([
+    [
+      Markup.button.callback(
+        `${mode === "paper" ? "✅ " : ""}📝 Paper`,
+        "acct_paper",
+      ),
+      Markup.button.callback(
+        `${mode === "real" ? "✅ " : ""}💵 Real`,
+        "acct_real",
+      ),
+    ],
+  ]);
+
+async function enterTradingMode(ctx) {
+  await setMode(ctx.chat.id, "trading");
+  const { mode, line } = await accountSummary(ctx);
+  return ctx.reply(
+    `📈 Trading mode is ON\n${line}\n\nPaste a contract address to look up a token, or pick the account to trade with:`,
+    accountButtons(mode),
+  );
+}
+
+const REAL_OFF_MSG =
+  "🚧 Real trading isn't enabled yet. Use /account to switch back to Paper.";
 
 const systemPrompt = `
 You are **Dax**, a personal assistant created by ParanormalRave,also known as *Mummy Rave*.
@@ -178,12 +232,7 @@ bot.command("reset", async (ctx) => {
   await ctx.reply("all clear and ready to fuck `em off :)");
 });
 
-bot.command("trading", async (ctx) => {
-  await setMode(ctx.chat.id, "trading");
-  await ctx.reply(
-    `📈 Trading mode is On. Paste a contract address to see details`,
-  );
-});
+bot.command("trading", enterTradingMode);
 
 bot.command("wallet", async (ctx) => {
   try {
@@ -210,11 +259,11 @@ bot.command("wallet", async (ctx) => {
 
 bot.command("balance", async (ctx) => {
   try {
-    const balance = await getPaperBalance(ctx.from.id);
-    return ctx.reply(`Paper balance: ${balance.toFixed(4)} SOL`);
+    const { line } = await accountSummary(ctx);
+    return ctx.reply(`💼 Current account\n${line}\n\nSwitch with /account`);
   } catch (err) {
-    console.error(`Balance check failed:`, err);
-    return ctx.reply(`Could not check your balance right now`);
+    console.error("Balance check failed:", err.message);
+    return ctx.reply("Could not check your balance right now");
   }
 });
 
@@ -265,8 +314,49 @@ bot.command("menu", (ctx) => {
   );
 });
 
+bot.command("account", async (ctx) => {
+  const { mode, line } = await accountSummary(ctx);
+  return ctx.reply(
+    `Current account:\n${line}\n\nWhich account do you want to trade with?`,
+    accountButtons(mode),
+  );
+});
+
+bot.action("acct_paper", async (ctx) => {
+  await setAccountMode(ctx.from.id, "paper");
+  await ctx.answerCbQuery("Paper account");
+  const { line } = await accountSummary(ctx);
+  return ctx.reply(`Switched.\n${line}`);
+});
+
+bot.action("acct_real", async (ctx) => {
+  await ctx.answerCbQuery();
+  const wallet = await getWallet(ctx.from.id);
+  if (!wallet) return ctx.reply("You need a wallet first. Send /wallet.");
+  return ctx.reply(
+    "⚠️ Real account uses real funds. Trading on it isn't switched on yet, so for now this only shows your real balance. Continue?",
+    Markup.inlineKeyboard([
+      [
+        Markup.button.callback("Yes, switch to Real", "acct_real_confirm"),
+        Markup.button.callback("Cancel", "acct_paper"),
+      ],
+    ]),
+  );
+});
+
+bot.action("acct_real_confirm", async (ctx) => {
+  await setAccountMode(ctx.from.id, "real");
+  await ctx.answerCbQuery("Real account");
+  const { line } = await accountSummary(ctx);
+  return ctx.reply(`Switched.\n${line}`);
+});
+
 async function executeBuy(ctx, solAmount) {
   try {
+    const acct = await accountSummary(ctx);
+    if (acct.mode === "real")
+      return ctx.reply(`${acct.line}\n\n${REAL_OFF_MSG}`);
+
     const pending = await getPendingChart(ctx.chat.id);
     if (!pending) return ctx.reply("Paste the token address first");
 
@@ -294,7 +384,7 @@ async function executeBuy(ctx, solAmount) {
       priceChangePercent: info.priceChange24h,
     });
 
-    const caption = `✅ Bought ${result.tokensReceived.toFixed(2)} ${info.symbol}\nSpent: ${solAmount} SOL\nBalance: ${result.newBalance.toFixed(4)} SOL\n\nEntry: $${info.priceUsd}\nCurrent: $${info.priceUsd}\nPnL: $0.00 (0.00%)`;
+    const caption = `${acct.label}\n✅ Bought ${result.tokensReceived.toFixed(2)} ${info.symbol}\nSpent: ${solAmount} SOL\nBalance: ${result.newBalance.toFixed(4)} SOL\n\nEntry: $${info.priceUsd}\nCurrent: $${info.priceUsd}\nPnL: $0.00 (0.00%)`;
 
     return ctx.replyWithPhoto(
       { source: positionCard },
@@ -319,9 +409,8 @@ async function executeBuy(ctx, solAmount) {
 }
 
 bot.action("mode_trading", async (ctx) => {
-  await setMode(ctx.chat.id, "trading");
   await ctx.answerCbQuery();
-  await ctx.reply("Switched to Trading mode");
+  return enterTradingMode(ctx);
 });
 
 bot.action("show_buy", async (ctx) => {
@@ -419,6 +508,9 @@ bot.action(/^sell_pct_(\d+)_(\d+)$/, async (ctx) => {
     const positionId = Number(ctx.match[1]);
     const percent = Number(ctx.match[2]);
     await ctx.answerCbQuery();
+    const acct = await accountSummary(ctx);
+    if (acct.mode === "real")
+      return ctx.reply(`${acct.line}\n\n${REAL_OFF_MSG}`);
 
     const positions = await getPaperPositions(ctx.from.id);
     const position = positions.find((p) => p.id === positionId);
@@ -434,8 +526,9 @@ bot.action(/^sell_pct_(\d+)_(\d+)$/, async (ctx) => {
       Number(info.priceUsd),
       solPriceUsd,
     );
+    const after = await accountSummary(ctx);
     return ctx.reply(
-      `📃 Sold ${percent}% — Received: ${result.solReceived.toFixed(4)} SOL\nP&L: $${result.pnlUsd.toFixed(2)}`,
+      `${after.line}\n📃 Sold ${percent}% — Received: ${result.solReceived.toFixed(4)} SOL\nP&L: $${result.pnlUsd.toFixed(2)}`,
     );
   } catch (err) {
     return ctx.reply(`⚠️ ${err.message}`);
@@ -659,6 +752,7 @@ async function handleTradingInput(ctx) {
         ? `${holderCount.count.toLocaleString()}${holderCount.capped ? "+" : ""}`
         : "N/A";
       const top10Holders = holders ? `${holders.top10Percentage}%` : "N/A";
+      const acct = await accountSummary(ctx);
       const message = `
       📊 *${info.name}* (${info.symbol})
 
