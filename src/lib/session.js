@@ -90,3 +90,15 @@ export async function getAccountMode(userId) {
   return val === 'real' ? 'real' : 'paper'
 }
 
+// a real order waiting for the user's confirm tap (expires in 2 minutes)
+export async function setRealOrder(userId, order) {
+  await redis.set(`realorder:${userId}`, JSON.stringify(order), { ex: 120 })
+}
+export async function getRealOrder(userId) {
+  const d = await redis.get(`realorder:${userId}`)
+  if (typeof d === 'object' && d !== null) return d
+  return d ? JSON.parse(d) : null
+}
+export async function clearRealOrder(userId) {
+  await redis.del(`realorder:${userId}`)
+}

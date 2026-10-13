@@ -46,6 +46,18 @@ import {
   paperSellPercentage,
 } from "./lib/paperTrading.js";
 import { generateTokenIntroCard } from "./lib/cards.js";
+import {
+  MAX_PER_TRADE,
+  MAX_PER_DAY,
+  isRealEnabled,
+  setRealEnabled,
+} from "./lib/realLimits.js";
+import {
+  realBuy,
+  realSell,
+  getRealPositions,
+  previewBuy,
+} from "./lib/realTrading.js";
 
 export const bot = new Telegraf(process.env.BOT_TOKEN, {
   handlerTimeout: 60_000,
@@ -120,7 +132,7 @@ async function enterTradingMode(ctx) {
 }
 
 const REAL_OFF_MSG =
-  "🚧 Real trading isn't enabled yet. Use /account to switch back to Paper.";
+  "🚧 Real trading is switched off. Send /enablereal to turn it on, or use /account for Paper.";
 
 const systemPrompt = `
 You are **Dax**, a personal assistant created by ParanormalRave,also known as *Mummy Rave*.
@@ -268,6 +280,8 @@ bot.command("balance", async (ctx) => {
 });
 
 bot.command("positions", async (ctx) => {
+  const acct = await accountSummary(ctx);
+  if (acct.mode === "real") return showRealPositions(ctx, acct);
   const positions = await getPaperPositions(ctx.from.id);
   if (positions.length === 0) return ctx.reply("No open paper position");
 
@@ -281,6 +295,8 @@ bot.command("positions", async (ctx) => {
 });
 
 bot.command("sell", async (ctx) => {
+  const acct = await accountSummary(ctx);
+  if (acct.mode === "real") return showRealPositions(ctx, acct);
   const positions = await getPaperPositions(ctx.from.id);
   if (!positions.length) {
     return ctx.reply("No open paper position to sell");
@@ -334,7 +350,7 @@ bot.action("acct_real", async (ctx) => {
   const wallet = await getWallet(ctx.from.id);
   if (!wallet) return ctx.reply("You need a wallet first. Send /wallet.");
   return ctx.reply(
-    "⚠️ Real account uses real funds. Trading on it isn't switched on yet, so for now this only shows your real balance. Continue?",
+    "⚠️ Real account uses real funds. Buys need /enablereal and respect the caps. Continue?",
     Markup.inlineKeyboard([
       [
         Markup.button.callback("Yes, switch to Real", "acct_real_confirm"),
@@ -351,13 +367,171 @@ bot.action("acct_real_confirm", async (ctx) => {
   return ctx.reply(`Switched.\n${line}`);
 });
 
+async function executeRealBuy(ctx, solAmount, acct) {
+  if (!(await isRealEnabled()))
+    return ctx.reply(`${acct.line}\n\n${REAL_OFF_MSG}`);
+  if (!(solAmount > 0) || solAmount > MAX_PER_TRADE)
+    return ctx.reply(
+      `${acct.line}\n\nReal trades are capped at ${MAX_PER_TRADE} SOL each.`,
+    );
+  const pending = await getPendingChart(ctx.chat.id);
+  if (!pending) return ctx.reply("Paste the token address first");
+  const info = await getTokenInfoWithFallback(pending.tokenAddress);
+  if (!info) return ctx.reply("Could not find data");
+
+  const preview = await withTimeout(
+    previewBuy(pending.tokenAddress, solAmount),
+    12_000,
+    "quote",
+  ).catch(() => null);
+
+  await setRealOrder(ctx.from.id, {
+    tokenAddress: pending.tokenAddress,
+    symbol: info.symbol,
+    solAmount,
+  });
+  return ctx.reply(
+    `${acct.line}\n\n⚠️ REAL ORDER\nBuy ${info.symbol} with ${solAmount} SOL\n` +
+      (preview
+        ? `Expected: ~${preview.expectedTokens.toFixed(2)} ${info.symbol} (before slippage)\nFee: ${preview.feeBps} bps\n`
+        : "Quote unavailable right now.\n") +
+      `Max slippage: ${Number(process.env.REAL_SLIPPAGE_BPS || 500) / 100}%\n\nThis spends real SOL. Confirm within 2 minutes.`,
+    Markup.inlineKeyboard([
+      [
+        Markup.button.callback("✅ Confirm buy", "real_buy_confirm"),
+        Markup.button.callback("❌ Cancel", "real_buy_cancel"),
+      ],
+    ]),
+  );
+}
+
+bot.action("real_buy_cancel", async (ctx) => {
+  await ctx.answerCbQuery("Cancelled");
+  await clearRealOrder(ctx.from.id);
+  return ctx.reply("Cancelled. Nothing was bought.");
+});
+
+bot.action("real_buy_confirm", async (ctx) => {
+  await ctx.answerCbQuery("Placing order…");
+  try {
+    const acct = await accountSummary(ctx);
+    if (acct.mode !== "real")
+      return ctx.reply("You're on Paper now. Nothing was bought.");
+    const order = await getRealOrder(ctx.from.id);
+    if (!order) return ctx.reply("That order expired. Start again.");
+    await clearRealOrder(ctx.from.id); // single use: a second tap finds nothing
+    await ctx.reply("⏳ Sending real order…");
+
+    const r = await realBuy({ userId: ctx.from.id, ...order });
+    if (!r.ok)
+      return ctx.reply(
+        `❌ ${r.error}${r.signature ? `\nhttps://solscan.io/tx/${r.signature}` : ""}`,
+      );
+    const after = await accountSummary(ctx);
+    return ctx.reply(
+      `${after.line}\n✅ Bought ${r.tokens.toFixed(2)} ${order.symbol}\nSpent: ${r.solSpent.toFixed(4)} SOL${r.approximate ? " (approx.)" : ""}\nPosition #${r.positionId}\nhttps://solscan.io/tx/${r.signature}`,
+    );
+  } catch (err) {
+    console.error("real buy confirm failed:", err.message);
+    return ctx.reply(
+      "⚠️ Something went wrong. Check /positions and Solscan before retrying.",
+    );
+  }
+});
+
+async function showRealPositions(ctx, acct) {
+  const positions = await getRealPositions(ctx.from.id);
+  if (!positions.length)
+    return ctx.reply(`${acct.line}\n\nNo open real positions.`);
+  const lines = positions.map(
+    (p) =>
+      `#${p.id} · ${p.symbol}: ${(Number(p.amount_raw) / 10 ** p.decimals).toFixed(2)} (cost ${(Number(p.sol_spent_lamports) / 1e9).toFixed(4)} SOL)`,
+  );
+  return ctx.reply(
+    `${acct.line}\n\n📊 Real positions:\n${lines.join("\n")}`,
+    Markup.inlineKeyboard(
+      positions.map((p) => [
+        Markup.button.callback(
+          `💰 Sell #${p.id} ${p.symbol}`,
+          `rsell_menu_${p.id}`,
+        ),
+      ]),
+    ),
+  );
+}
+
+bot.action(/^rsell_menu_(\d+)$/, async (ctx) => {
+  const id = ctx.match[1];
+  await ctx.answerCbQuery();
+  return ctx.reply(
+    "Sell how much? (real)",
+    Markup.inlineKeyboard([
+      [
+        Markup.button.callback("25%", `rsell_pct_${id}_25`),
+        Markup.button.callback("50%", `rsell_pct_${id}_50`),
+      ],
+      [
+        Markup.button.callback("75%", `rsell_pct_${id}_75`),
+        Markup.button.callback("100%", `rsell_pct_${id}_100`),
+      ],
+    ]),
+  );
+});
+
+bot.action(/^rsell_pct_(\d+)_(\d+)$/, async (ctx) => {
+  await ctx.answerCbQuery("Selling…");
+  try {
+    const acct = await accountSummary(ctx);
+    if (acct.mode !== "real")
+      return ctx.reply("You're on Paper now. Nothing was sold.");
+    await ctx.reply("⏳ Selling…");
+    const r = await realSell({
+      userId: ctx.from.id,
+      positionId: Number(ctx.match[1]),
+      percent: Number(ctx.match[2]),
+    });
+    if (!r.ok)
+      return ctx.reply(
+        `❌ ${r.error}${r.signature ? `\nhttps://solscan.io/tx/${r.signature}` : ""}`,
+      );
+    const after = await accountSummary(ctx);
+    return ctx.reply(
+      `${after.line}\n📃 Sold ${ctx.match[2]}%: received ${r.solReceived.toFixed(4)} SOL${r.approximate ? " (approx.)" : ""}\nP&L: ${r.pnlSol >= 0 ? "+" : ""}${r.pnlSol.toFixed(4)} SOL\nhttps://solscan.io/tx/${r.signature}`,
+    );
+  } catch (err) {
+    console.error("real sell failed:", err.message);
+    return ctx.reply("⚠️ Something went wrong. Check Solscan before retrying.");
+  }
+});
+
+bot.command("enablereal", async (ctx) => {
+  if (MAX_PER_TRADE <= 0 || MAX_PER_DAY <= 0)
+    return ctx.reply(
+      "Set REAL_MAX_SOL_PER_TRADE and REAL_MAX_SOL_PER_DAY in .env first.",
+    );
+  if (!process.env.JUPITER_API_KEY)
+    return ctx.reply("Set JUPITER_API_KEY in .env first.");
+  await setRealEnabled(true);
+  return ctx.reply(
+    `Real trading flag ON. Caps: ${MAX_PER_TRADE} SOL per trade, ${MAX_PER_DAY} SOL per day. Buys only work while you're on the Real account.`,
+  );
+});
+
+bot.command("stopreal", async (ctx) => {
+  await setRealEnabled(false);
+  await setAccountMode(ctx.from.id, "paper");
+  return ctx.reply(
+    "🛑 Real buying is OFF and you're back on Paper. Sells of existing real positions still work from /positions on the Real account.",
+  );
+});
+
 async function executeBuy(ctx, solAmount) {
   try {
     const acct = await accountSummary(ctx);
-    if (acct.mode === "real")
-      return ctx.reply(`${acct.line}\n\n${REAL_OFF_MSG}`);
+    if (acct.mode === "real") return executeRealBuy(ctx, solAmount, acct);
 
     const pending = await getPendingChart(ctx.chat.id);
+
     if (!pending) return ctx.reply("Paste the token address first");
 
     const info = await getTokenInfoWithFallback(pending.tokenAddress);
@@ -437,6 +611,8 @@ bot.action("buy_custom", async (ctx) => {
 
 bot.action("show_positions", async (ctx) => {
   await ctx.answerCbQuery();
+  const acct = await accountSummary(ctx);
+  if (acct.mode === "real") return showRealPositions(ctx, acct);
   const positions = await getPaperPositions(ctx.from.id);
   if (!positions.length) return ctx.reply("No open paper positions");
   const lines = positions.map(
