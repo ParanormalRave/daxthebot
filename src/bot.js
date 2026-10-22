@@ -742,6 +742,8 @@ bot.action(/^sell_pct_(\d+)_(\d+)$/, async (ctx) => {
       Number(info.priceUsd),
       solPriceUsd,
     );
+
+    const after = await accountSummary(ctx);
     const win = result.pnlUsd >= 0;
     return ctx.reply(
       [
@@ -750,7 +752,7 @@ bot.action(/^sell_pct_(\d+)_(\d+)$/, async (ctx) => {
         `Received: ${result.solReceived.toFixed(4)} SOL`,
         `PnL: ${fmtUsd(result.pnlUsd)}`,
         "",
-        after.line,
+        esc(after.line),
       ].join("\n"),
       {
         parse_mode: "HTML",
