@@ -122,6 +122,65 @@ const accountButtons = (mode) =>
     ],
   ]);
 
+const esc = (s) =>
+  String(s ?? "").replace(
+    /[&<>]/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c],
+  );
+
+const fmtPrice = (n) => {
+  n = Number(n);
+  if (!isFinite(n)) return "N/A";
+  return n >= 1 ? n.toFixed(4) : n.toFixed(10).replace(/\.?0+$/, "");
+};
+
+const fmtUsd = (n) => `${n < 0 ? "-" : "+"}$${Math.abs(n).toFixed(2)}`;
+
+async function buildPaperPositions(userId, accountLine) {
+  const positions = await getPaperPositions(userId);
+  if (!positions.length) return null;
+
+  const blocks = await Promise.all(
+    positions.map(async (p) => {
+      const info = await withTimeout(
+        getPairInfo(p.pair_address),
+        6_000,
+        "price",
+      ).catch(() => null);
+      const entry = Number(p.entry_price);
+      const amount = Number(p.amount_tokens);
+      const now = info ? Number(info.priceUsd) : null;
+      const head = `#${p.id} · <b>${esc(p.symbol)}</b>`;
+      if (!now) {
+        return `⚪ ${head}\nAmount: ${amount.toFixed(2)}\nEntry: $${fmtPrice(entry)}\nNow: unavailable`;
+      }
+      const pnl = amount * (now - entry);
+      const pct = ((now - entry) / entry) * 100;
+      return `${pnl >= 0 ? "🟢" : "🔴"} ${head}\nAmount: ${amount.toFixed(2)}\nEntry: $${fmtPrice(entry)}\nNow: $${fmtPrice(now)}\nPnL: ${fmtUsd(pnl)} (${pct.toFixed(2)}%)`;
+    }),
+  );
+
+  const keyboard = Markup.inlineKeyboard([
+    ...positions.map((p) => [
+      Markup.button.callback(`💰 Sell #${p.id} ${p.symbol}`, `sell_menu_${p.id}`),
+    ]),
+    [Markup.button.callback("🔄 Refresh", "refresh_positions")],
+  ]);
+
+  return {
+    text: `📊 <b>Your positions</b>\n${accountLine}\n\n${blocks.join("\n\n")}`,
+    keyboard,
+  };
+}
+
+async function showPositions(ctx) {
+  const acct = await accountSummary(ctx);
+  if (acct.mode === "real") return showRealPositions(ctx, acct);
+  const view = await buildPaperPositions(ctx.from.id, acct.line);
+  if (!view) return ctx.reply(`${acct.line}\n\nNo open paper positions.`);
+  return ctx.reply(view.text, { parse_mode: "HTML", ...view.keyboard });
+}
+
 async function enterTradingMode(ctx) {
   await setMode(ctx.chat.id, "trading");
   const { mode, line } = await accountSummary(ctx);
@@ -279,40 +338,8 @@ bot.command("balance", async (ctx) => {
   }
 });
 
-bot.command("positions", async (ctx) => {
-  const acct = await accountSummary(ctx);
-  if (acct.mode === "real") return showRealPositions(ctx, acct);
-  const positions = await getPaperPositions(ctx.from.id);
-  if (positions.length === 0) return ctx.reply("No open paper position");
-
-  const lines = positions.map(
-    (p) =>
-      `#${p.id} — ${p.symbol}: ${Number(p.amount_tokens).toFixed(2)} @ $${p.entry_price}`,
-  );
-  return ctx.reply(
-    `📊 Your positions:\n${lines.join("\n")}\n\nSell with /sell <id>`,
-  );
-});
-
-bot.command("sell", async (ctx) => {
-  const acct = await accountSummary(ctx);
-  if (acct.mode === "real") return showRealPositions(ctx, acct);
-  const positions = await getPaperPositions(ctx.from.id);
-  if (!positions.length) {
-    return ctx.reply("No open paper position to sell");
-  }
-
-  const buttons = positions.map((p) => [
-    Markup.button.callback(
-      `#${p.id}- ${p.symbol}(${Number(p.amount_tokens).toFixed(2)})`,
-      `sell_menu_${p.id}`,
-    ),
-  ]);
-  return ctx.reply(
-    "Which position would you like to sell?",
-    Markup.inlineKeyboard(buttons),
-  );
-});
+bot.command("positions", showPositions);
+bot.command("sell", showPositions);
 
 bot.command("chat", async (ctx) => {
   await setMode(ctx.chat.id, "chat");
@@ -611,15 +638,27 @@ bot.action("buy_custom", async (ctx) => {
 
 bot.action("show_positions", async (ctx) => {
   await ctx.answerCbQuery();
+  return showPositions(ctx);
+});
+
+bot.action("refresh_positions", async (ctx) => {
+  await ctx.answerCbQuery("Refreshed");
   const acct = await accountSummary(ctx);
-  if (acct.mode === "real") return showRealPositions(ctx, acct);
-  const positions = await getPaperPositions(ctx.from.id);
-  if (!positions.length) return ctx.reply("No open paper positions");
-  const lines = positions.map(
-    (p) =>
-      `#${p.id} - ${p.symbol}: ${Number(p.amount_tokens).toFixed(2)} @ $${p.entry_price}`,
-  );
-  return ctx.reply(`📊 Your positions:\n${lines.join("\n")}`);
+  const view = await buildPaperPositions(ctx.from.id, acct.line);
+  if (!view) return ctx.editMessageText("No open paper positions");
+  return ctx
+    .editMessageText(view.text, { parse_mode: "HTML", ...view.keyboard })
+    .catch(() => {});
+});
+
+bot.action("refresh_positions", async (ctx) => {
+  await ctx.answerCbQuery("Refreshed");
+  const acct = await accountSummary(ctx);
+  const view = await buildPaperPositions(ctx.from.id, acct.line);
+  if (!view) return ctx.editMessageText("No open paper positions");
+  return ctx
+    .editMessageText(view.text, { parse_mode: "HTML", ...view.keyboard })
+    .catch(() => {});
 });
 
 bot.action(/^buy_amt_(.+)$/, async (ctx) => {
@@ -662,23 +701,24 @@ bot.action(/^refresh_pos_(\d+)$/, async (ctx) => {
 });
 
 bot.action(/^sell_menu_(\d+)$/, async (ctx) => {
-  const positionId = ctx.match[1];
   await ctx.answerCbQuery();
+  const positionId = Number(ctx.match[1]);
+  const positions = await getPaperPositions(ctx.from.id);
+  const p = positions.find((x) => x.id === positionId);
+  if (!p) return ctx.reply("Position not found");
   return ctx.reply(
-    "Sell how much?",
-    Markup.inlineKeyboard([
-      [
-        Markup.button.callback("25%", `sell_pct_${positionId}_25`),
-        Markup.button.callback("50%", `sell_pct_${positionId}_50`),
-      ],
-      [
-        Markup.button.callback("75%", `sell_pct_${positionId}_75`),
-        Markup.button.callback("100%", `sell_pct_${positionId}_100`),
-      ],
-    ]),
+    `💰 <b>Sell ${esc(p.symbol)}</b> (#${p.id})\nHolding: ${Number(p.amount_tokens).toFixed(2)}\nEntry: $${fmtPrice(p.entry_price)}\n\nHow much do you want to sell?`,
+    {
+      parse_mode: "HTML",
+      ...Markup.inlineKeyboard([
+        [25, 50, 75, 100].map((pct) =>
+          Markup.button.callback(`${pct}%`, `sell_pct_${positionId}_${pct}`),
+        ),
+        [Markup.button.callback("← Back", "show_positions")],
+      ]),
+    },
   );
 });
-
 bot.action(/^sell_pct_(\d+)_(\d+)$/, async (ctx) => {
   try {
     const positionId = Number(ctx.match[1]);
@@ -702,9 +742,22 @@ bot.action(/^sell_pct_(\d+)_(\d+)$/, async (ctx) => {
       Number(info.priceUsd),
       solPriceUsd,
     );
-    const after = await accountSummary(ctx);
+    const win = result.pnlUsd >= 0;
     return ctx.reply(
-      `${after.line}\n📃 Sold ${percent}% — Received: ${result.solReceived.toFixed(4)} SOL\nP&L: $${result.pnlUsd.toFixed(2)}`,
+      [
+        `${win ? "🟢" : "🔴"} <b>Sold ${percent}% of ${esc(position.symbol)}</b>`,
+        "",
+        `Received: ${result.solReceived.toFixed(4)} SOL`,
+        `PnL: ${fmtUsd(result.pnlUsd)}`,
+        "",
+        after.line,
+      ].join("\n"),
+      {
+        parse_mode: "HTML",
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback("📊 Positions", "show_positions")],
+        ]),
+      },
     );
   } catch (err) {
     return ctx.reply(`⚠️ ${err.message}`);
@@ -856,14 +909,19 @@ function buildTokenLinkRows(tokenAddress, pairAddress) {
         "DexScreener",
         `https://dexscreener.com/solana/${pairAddress}`,
       ),
-      Markup.button.url("Solscan", `https://solscan.io/token/${tokenAddress}`),
+      Markup.button.url(
+        "Birdeye",
+        `https://birdeye.so/token/${tokenAddress}?chain=solana`,
+      ),
     ],
     [
       Markup.button.url(
-        "CoinGecko",
+        "GeckoTerminal",
         `https://www.geckoterminal.com/solana/pools/${pairAddress}`,
       ),
+      Markup.button.url("Jupiter", `https://jup.ag/swap/SOL-${tokenAddress}`),
     ],
+    [Markup.button.url("Solscan", `https://solscan.io/token/${tokenAddress}`)],
   ];
 }
 
@@ -929,22 +987,25 @@ async function handleTradingInput(ctx) {
         : "N/A";
       const top10Holders = holders ? `${holders.top10Percentage}%` : "N/A";
       const acct = await accountSummary(ctx);
-      const message = `
-      📊 *${info.name}* (${info.symbol})
-
-      💸 Price: $${info.priceUsd}
-      📉 24h Change: ${info.priceChange24h}%
-      💧  Liquidity: $${Number(info.liquidityUsd ?? 0).toLocaleString()}
-      💹 24h Volume: $${Number(info.volume24h ?? 0).toLocaleString()}
-      🏷  Market Cap: ${info.marketCap ? "$" + Number(info.marketCap).toLocaleString() : "N/A"}
-      🔁 DEX: ${info.dex}
-      ⏳ Age: ${getTokenAge(info.pairCreatedAt)}
-
-      🔐 Mint Authority: ${mintStatus}
-      🥶 Freeze Authority: ${freezeStatus}
-      👥 Holders: ${holdersText}
-      🔝 Top 10 Hold: ${top10Holders}
-    `.trim();
+      const message = [
+        `📊 <b>${esc(info.name)}</b> (${esc(info.symbol)})`,
+        `<code>${text}</code>`,
+        "",
+        esc(acct.line),
+        "",
+        `💸 Price: $${fmtPrice(info.priceUsd)}`,
+        `📉 24h Change: ${info.priceChange24h ?? "N/A"}%`,
+        `💧 Liquidity: $${Number(info.liquidityUsd ?? 0).toLocaleString()}`,
+        `💹 24h Volume: $${Number(info.volume24h ?? 0).toLocaleString()}`,
+        `🏷 Market Cap: ${info.marketCap ? "$" + Number(info.marketCap).toLocaleString() : "N/A"}`,
+        `🔁 DEX: ${esc(info.dex ?? "N/A")}`,
+        `⏳ Age: ${getTokenAge(info.pairCreatedAt)}`,
+        "",
+        `🔐 Mint Authority: ${mintStatus}`,
+        `🥶 Freeze Authority: ${freezeStatus}`,
+        `👥 Holders: ${holdersText}`,
+        `🔝 Top 10 Hold: ${top10Holders}`,
+      ].join("\n");
 
       const introCard = await generateTokenIntroCard({
         name: info.name,
@@ -971,33 +1032,40 @@ async function handleTradingInput(ctx) {
           priceChangePercent: info.priceChange24h,
         });
       }
-      return ctx.replyWithPhoto(
-        { source: introCard },
-        {
-          caption: message,
-          parse_mode: "Markdown",
-          ...Markup.inlineKeyboard([
-            ...(hasChartData
-              ? [
-                  [
-                    Markup.button.callback("5M", "tf_5m"),
-                    Markup.button.callback("15M", "tf_15m"),
-                    Markup.button.callback("1H", "tf_1h"),
-                  ],
-                  [
-                    Markup.button.callback("4H", "tf_4h"),
-                    Markup.button.callback("1D", "tf_1d"),
-                  ],
-                ]
-              : []),
-            [
-              Markup.button.callback("💰 Buy", "show_buy"),
-              Markup.button.callback("📊 Positions", "show_positions"),
-            ],
-            ...buildTokenLinkRows(text, info.pairAddress),
-          ]),
+      return ctx.reply(message, {
+        parse_mode: "HTML",
+        link_preview_options: {
+          url: `https://dexscreener.com/solana/${info.pairAddress}`,
+          prefer_large_media: true,
         },
-      );
+        ...Markup.inlineKeyboard([
+          ...accountButtons(acct.mode).reply_markup.inline_keyboard,
+          ["0.01", "0.02", "0.03"].map((a) =>
+            Markup.button.callback(`${a} SOL`, `buy_amt_${a}`),
+          ),
+          [
+            ...["0.04", "0.05"].map((a) =>
+              Markup.button.callback(`${a} SOL`, `buy_amt_${a}`),
+            ),
+            Markup.button.callback("✏️ Custom", "buy_custom"),
+          ],
+          ...(hasChartData
+            ? [
+                [
+                  Markup.button.callback("5M", "tf_5m"),
+                  Markup.button.callback("15M", "tf_15m"),
+                  Markup.button.callback("1H", "tf_1h"),
+                ],
+                [
+                  Markup.button.callback("4H", "tf_4h"),
+                  Markup.button.callback("1D", "tf_1d"),
+                ],
+              ]
+            : []),
+          [Markup.button.callback("📊 Positions", "show_positions")],
+          ...buildTokenLinkRows(text, info.pairAddress),
+        ]),
+      });
     } else {
       return ctx.reply(
         "In trading mode. Paste a Ca to look up a token. Might be a solana token",
