@@ -17,6 +17,9 @@ import {
   getAwaitingCustomAmount,
   setAccountMode,
   getAccountMode,
+  setRealOrder,
+  getRealOrder,
+  clearRealOrder,
 } from "./lib/session.js";
 import {
   getTokenInfoWithFallback,
@@ -45,7 +48,6 @@ import {
   getPaperPositions,
   paperSellPercentage,
 } from "./lib/paperTrading.js";
-import { generateTokenIntroCard } from "./lib/cards.js";
 import {
   MAX_PER_TRADE,
   MAX_PER_DAY,
@@ -134,7 +136,54 @@ const fmtPrice = (n) => {
   return n >= 1 ? n.toFixed(4) : n.toFixed(10).replace(/\.?0+$/, "");
 };
 
-const fmtUsd = (n) => `${n < 0 ? "-" : "+"}$${Math.abs(n).toFixed(2)}`;
+const fmtUsd = (n) => {
+  const v = Math.abs(n) < 0.005 ? 0 : n;
+  return `${v < 0 ? "-" : "+"}$${Math.abs(v).toFixed(2)}`;
+};
+
+const buyRows = () => [
+  ["0.01", "0.02", "0.03"].map((a) =>
+    Markup.button.callback(`${a} SOL`, `buy_amt_${a}`),
+  ),
+  [
+    ...["0.04", "0.05"].map((a) =>
+      Markup.button.callback(`${a} SOL`, `buy_amt_${a}`),
+    ),
+    Markup.button.callback("✏️ Custom", "buy_custom"),
+  ],
+];
+
+function buildPositionCard({ id, symbol, amount, entry, now, pairAddress }) {
+  const hasPrice = Number.isFinite(now) && now > 0;
+  const pnl = hasPrice ? amount * (now - entry) : 0;
+  const pct = hasPrice ? ((now - entry) / entry) * 100 : 0;
+  const dot = !hasPrice ? "⚪" : pnl >= 0 ? "🟢" : "🔴";
+
+  const text = [
+    `${dot} <b>${esc(symbol)}</b> · Position #${id}`,
+    "",
+    `Amount: ${amount.toLocaleString("en-US", { maximumFractionDigits: 2 })}`,
+    `Entry: $${fmtPrice(entry)}`,
+    `Now: ${hasPrice ? "$" + fmtPrice(now) : "unavailable"}`,
+    hasPrice ? `PnL: ${fmtUsd(pnl)} (${pct.toFixed(2)}%)` : "PnL: N/A",
+  ].join("\n");
+
+  const rows = [
+    [
+      Markup.button.callback("🔄 Refresh", `refresh_pos_${id}`),
+      Markup.button.callback("💰 Sell", `sell_menu_${id}`),
+    ],
+  ];
+  if (pairAddress) {
+    rows.push([
+      Markup.button.url(
+        "📈 DexScreener",
+        `https://dexscreener.com/solana/${pairAddress}`,
+      ),
+    ]);
+  }
+  return { text, keyboard: Markup.inlineKeyboard(rows) };
+}
 
 async function buildPaperPositions(userId, accountLine) {
   const positions = await getPaperPositions(userId);
@@ -162,13 +211,16 @@ async function buildPaperPositions(userId, accountLine) {
 
   const keyboard = Markup.inlineKeyboard([
     ...positions.map((p) => [
-      Markup.button.callback(`💰 Sell #${p.id} ${p.symbol}`, `sell_menu_${p.id}`),
+      Markup.button.callback(
+        `💰 Sell #${p.id} ${p.symbol}`,
+        `sell_menu_${p.id}`,
+      ),
     ]),
     [Markup.button.callback("🔄 Refresh", "refresh_positions")],
   ]);
 
   return {
-    text: `📊 <b>Your positions</b>\n${accountLine}\n\n${blocks.join("\n\n")}`,
+    text: `📊 <b>Your positions</b>\n${esc(accountLine)}\n\n${blocks.join("\n\n")}`,
     keyboard,
   };
 }
@@ -180,6 +232,54 @@ async function showPositions(ctx) {
   if (!view) return ctx.reply(`${acct.line}\n\nNo open paper positions.`);
   return ctx.reply(view.text, { parse_mode: "HTML", ...view.keyboard });
 }
+
+// async function buildPaperPositions(userId, accountLine) {
+//   const positions = await getPaperPositions(userId);
+//   if (!positions.length) return null;
+
+//   const blocks = await Promise.all(
+//     positions.map(async (p) => {
+//       const info = await withTimeout(
+//         getPairInfo(p.pair_address),
+//         6_000,
+//         "price",
+//       ).catch(() => null);
+//       const entry = Number(p.entry_price);
+//       const amount = Number(p.amount_tokens);
+//       const now = info ? Number(info.priceUsd) : null;
+//       const head = `#${p.id} · <b>${esc(p.symbol)}</b>`;
+//       if (!now) {
+//         return `⚪ ${head}\nAmount: ${amount.toFixed(2)}\nEntry: $${fmtPrice(entry)}\nNow: unavailable`;
+//       }
+//       const pnl = amount * (now - entry);
+//       const pct = ((now - entry) / entry) * 100;
+//       return `${pnl >= 0 ? "🟢" : "🔴"} ${head}\nAmount: ${amount.toFixed(2)}\nEntry: $${fmtPrice(entry)}\nNow: $${fmtPrice(now)}\nPnL: ${fmtUsd(pnl)} (${pct.toFixed(2)}%)`;
+//     }),
+//   );
+
+//   const keyboard = Markup.inlineKeyboard([
+//     ...positions.map((p) => [
+//       Markup.button.callback(
+//         `💰 Sell #${p.id} ${p.symbol}`,
+//         `sell_menu_${p.id}`,
+//       ),
+//     ]),
+//     [Markup.button.callback("🔄 Refresh", "refresh_positions")],
+//   ]);
+
+//   return {
+//     text: `📊 <b>Your positions</b>\n${accountLine}\n\n${blocks.join("\n\n")}`,
+//     keyboard,
+//   };
+// }
+
+// async function showPositions(ctx) {
+//   const acct = await accountSummary(ctx);
+//   if (acct.mode === "real") return showRealPositions(ctx, acct);
+//   const view = await buildPaperPositions(ctx.from.id, acct.line);
+//   if (!view) return ctx.reply(`${acct.line}\n\nNo open paper positions.`);
+//   return ctx.reply(view.text, { parse_mode: "HTML", ...view.keyboard });
+// }
 
 async function enterTradingMode(ctx) {
   await setMode(ctx.chat.id, "trading");
@@ -575,33 +675,18 @@ async function executeBuy(ctx, solAmount) {
       solPriceUsd,
     );
 
-    const positionCard = await generateTokenIntroCard({
-      name: info.name,
+    const card = buildPositionCard({
+      id: result.positionId,
       symbol: info.symbol,
-      bannerUrl: info.imageUrl,
-      marketCap: info.marketCap,
-      volume24h: info.volume24h,
-      liquidityUsd: info.liquidityUsd,
-      priceChangePercent: info.priceChange24h,
+      amount: result.tokensReceived,
+      entry: Number(info.priceUsd),
+      now: Number(info.priceUsd),
+      pairAddress: info.pairAddress ?? pending.pairAddress,
     });
 
-    const caption = `${acct.label}\n✅ Bought ${result.tokensReceived.toFixed(2)} ${info.symbol}\nSpent: ${solAmount} SOL\nBalance: ${result.newBalance.toFixed(4)} SOL\n\nEntry: $${info.priceUsd}\nCurrent: $${info.priceUsd}\nPnL: $0.00 (0.00%)`;
-
-    return ctx.replyWithPhoto(
-      { source: positionCard },
-      {
-        caption,
-        parse_mode: "Markdown",
-        ...Markup.inlineKeyboard([
-          [
-            Markup.button.callback(
-              "🔃 refresh",
-              `refresh_pos_${result.positionId}`,
-            ),
-            Markup.button.callback("💰sell", `sell_menu_${result.positionId}`),
-          ],
-        ]),
-      },
+    return ctx.reply(
+      `✅ <b>Bought</b> for ${solAmount} SOL · ${acct.label}\n\n${card.text}\n\nBalance: ${result.newBalance.toFixed(4)} SOL`,
+      { parse_mode: "HTML", ...card.keyboard },
     );
   } catch (err) {
     console.error("failed buy", err);
@@ -616,17 +701,10 @@ bot.action("mode_trading", async (ctx) => {
 
 bot.action("show_buy", async (ctx) => {
   await ctx.answerCbQuery();
+  const acct = await accountSummary(ctx);
   return ctx.reply(
-    "Choose an amount:",
-    Markup.inlineKeyboard([
-      ["0.01", "0.02", "0.03"].map((a) =>
-        Markup.button.callback(`${a}SOL`, `buy_amt_${a}`),
-      ),
-      ["0.04", "0.05"].map((a) =>
-        Markup.button.callback(`${a} SOL`, `buy_amt_${a}`),
-      ),
-      [Markup.button.callback("Custom amount", "buy_custom")],
-    ]),
+    `💰 <b>Buy</b>\n${esc(acct.line)}\n\nPick an amount:`,
+    { parse_mode: "HTML", ...Markup.inlineKeyboard(buyRows()) },
   );
 });
 
@@ -639,16 +717,6 @@ bot.action("buy_custom", async (ctx) => {
 bot.action("show_positions", async (ctx) => {
   await ctx.answerCbQuery();
   return showPositions(ctx);
-});
-
-bot.action("refresh_positions", async (ctx) => {
-  await ctx.answerCbQuery("Refreshed");
-  const acct = await accountSummary(ctx);
-  const view = await buildPaperPositions(ctx.from.id, acct.line);
-  if (!view) return ctx.editMessageText("No open paper positions");
-  return ctx
-    .editMessageText(view.text, { parse_mode: "HTML", ...view.keyboard })
-    .catch(() => {});
 });
 
 bot.action("refresh_positions", async (ctx) => {
@@ -676,27 +744,24 @@ bot.action(/^refresh_pos_(\d+)$/, async (ctx) => {
     const info = await getPairInfo(position.pair_address);
     if (!info) return ctx.answerCbQuery("Could not fetch price");
 
-    const currentPriceUsd = Number(info.priceUsd);
-    const entryPriceUsd = Number(position.entry_price);
-    const amountTokens = Number(position.amount_tokens);
-
-    const pnlUsd = amountTokens * (currentPriceUsd - entryPriceUsd);
-    const pnlPercent =
-      ((currentPriceUsd - entryPriceUsd) / entryPriceUsd) * 100;
+    const card = buildPositionCard({
+      id: position.id,
+      symbol: position.symbol,
+      amount: Number(position.amount_tokens),
+      entry: Number(position.entry_price),
+      now: Number(info.priceUsd),
+      pairAddress: position.pair_address,
+    });
 
     await ctx.answerCbQuery("Refreshed");
-    await ctx.editMessageCaption(
-      `📝 ${position.symbol}\nAmount: ${amountTokens.toFixed(2)}\n\nEntry: $${entryPriceUsd}\nCurrent: $${currentPriceUsd}\nPnL: $${pnlUsd.toFixed(2)} (${pnlPercent.toFixed(2)}%)`,
-      Markup.inlineKeyboard([
-        [
-          Markup.button.callback("🔄 Refresh", `refresh_pos_${positionId}`),
-          Markup.button.callback("💰 Sell", `sell_menu_${positionId}`),
-        ],
-      ]),
-    );
+    await ctx
+      .editMessageText(card.text, { parse_mode: "HTML", ...card.keyboard })
+      .catch((e) => {
+        if (!String(e.message).includes("not modified")) throw e;
+      });
   } catch (err) {
-    console.error("Refreshed failed:", err);
-    await ctx.answerCbQuery("Something went wrong");
+    console.error("Refresh failed:", err);
+    await ctx.answerCbQuery("Something went wrong").catch(() => {});
   }
 });
 
@@ -825,10 +890,8 @@ bot.action(/^tf_(.+)$/, async (ctx) => {
             Markup.button.callback("4H", "tf_4h"),
             Markup.button.callback("1D", "tf_1d"),
           ],
-          [
-            Markup.button.callback("💰 Buy", "show_buy"),
-            Markup.button.callback("📊 Positions", "show_positions"),
-          ],
+          ...buyRows(),
+          [Markup.button.callback("📊 Positions", "show_positions")],
           ...buildTokenLinkRows(pending.tokenAddress, pending.pairAddress),
         ]),
       },
@@ -1008,16 +1071,6 @@ async function handleTradingInput(ctx) {
         `👥 Holders: ${holdersText}`,
         `🔝 Top 10 Hold: ${top10Holders}`,
       ].join("\n");
-
-      const introCard = await generateTokenIntroCard({
-        name: info.name,
-        symbol: info.symbol,
-        bannerUrl: info.imageUrl,
-        marketCap: info.marketCap,
-        volume24h: info.volume24h,
-        liquidityUsd: info.liquidityUsd,
-        priceChangePercent: info.priceChange24h,
-      });
 
       const priceHistory = await withTimeout(
         getPriceHistory(info.pairAddress),
