@@ -16,27 +16,27 @@ Buy Fill:
   liquidityUsd = 20000 -> R = 10000
   impactMult = 1 + 1.8 / 10000 = 1.00018
   fillPrice = 0.000010 * 1.015 * 1.00018 = 0.000010151827
-  qty = notional / fillPrice = 1.8 / 0.000010151827 = 177308.01257406403
+  qty = notional / fillPrice = 1.8 / 0.000010151827 = 177307.98604034525
 
 TP1 Sell (gain = +100% at observedPrice = 0.000020303654):
   sellPercentOfHoldings = 80% (0.80)
-  qtySold = 177308.01257406403 * 0.8 = 141846.41005925123
+  qtySold = 177307.98604034525 * 0.8 = 141846.3888322762
   costBasisSold = 1.8345 * 0.8 = 1.4676
   base price = 0.000020303654 (assume both recent observations are 0.000020303654)
   normalExitSlippageBps = 150 -> 1 - 0.015 = 0.985
-  grossValue = 141846.41005925123 * 0.000020303654 * 0.985 = 2.8368
+  grossValue = 141846.3888322762 * 0.000020303654 * 0.985 = 2.8368
   liquidityUsd = 25000 -> R = 12500
   impactFactor = 1 - 2.8368 / (12500 + 2.8368) = 1 - 0.0002268903565 = 0.9997731096435
   dexFee = 2.8368 * 25 / 10000 = 0.007092
   networkFee = 0.03
-  proceeds = 2.8368 * 0.9997731096435 - 0.007092 - 0.03 = 2.836156337436681 - 0.037092 = 2.799064337436681
-  pnl = 2.799064337436681 - 1.4676 = +1.331464337436681
-  qtyRemaining = 35461.6025148128
+  proceeds = 2.8368 * 0.9997731096435 - 0.007092 - 0.03 = 2.836156351333003 - 0.037092 = 2.799064351333003
+  pnl = 2.799064351333003 - 1.4676 = +1.331464351333003
+  qtyRemaining = 35461.59720806905
   costBasisRemainingUsd = 0.3669
   rent locked remains 0.407856 (not released until 100% closed)
 */
 
-import { numOrNull, positiveOrNull } from './util.js';
+import { numOrNull, positiveOrNull } from "./util.js";
 
 // Calculate fee and rent costs from SOL price and notional
 function calculateCosts(config, solPrice, notional) {
@@ -53,18 +53,20 @@ function calculateCosts(config, solPrice, notional) {
 
 // Check if paper account has available cash and slot for a new position
 export function canAfford(state, config, mint, solPrice) {
-  if (!state || typeof state !== 'object') {
-    throw new Error('canAfford: state must be an object');
+  if (!state || typeof state !== "object") {
+    throw new Error("canAfford: state must be an object");
   }
   if (!config || !config.paper) {
-    throw new Error('canAfford: config must contain paper settings');
+    throw new Error("canAfford: config must contain paper settings");
   }
-  if (typeof mint !== 'string' || mint.trim().length === 0) {
-    throw new Error('canAfford: mint must be a non-empty string');
+  if (typeof mint !== "string" || mint.trim().length === 0) {
+    throw new Error("canAfford: mint must be a non-empty string");
   }
   const sol = positiveOrNull(solPrice);
   if (sol === null) {
-    throw new Error(`canAfford: solPrice must be a positive number, got ${solPrice}`);
+    throw new Error(
+      `canAfford: solPrice must be a positive number, got ${solPrice}`,
+    );
   }
 
   // No open position for this mint
@@ -79,7 +81,11 @@ export function canAfford(state, config, mint, solPrice) {
   }
 
   const notional = config.paper.tradeSizeUsd;
-  const { ataRentUsd, networkFeeUsd, dexFeeUsd } = calculateCosts(config, sol, notional);
+  const { ataRentUsd, networkFeeUsd, dexFeeUsd } = calculateCosts(
+    config,
+    sol,
+    notional,
+  );
   const requiredCash = notional + ataRentUsd + networkFeeUsd + dexFeeUsd;
   const remainingCash = state.cashUsd - requiredCash;
 
@@ -87,13 +93,19 @@ export function canAfford(state, config, mint, solPrice) {
 }
 
 // Compute fill price, quantity and debits for a buy order
-export function computeBuyFill(prices, liquidityUsd, notional, config, solPrice) {
+export function computeBuyFill(
+  prices,
+  liquidityUsd,
+  notional,
+  config,
+  solPrice,
+) {
   if (!Array.isArray(prices) || prices.length === 0) {
-    throw new Error('computeBuyFill: prices must be a non-empty array');
+    throw new Error("computeBuyFill: prices must be a non-empty array");
   }
   const cleanPrices = prices.map(numOrNull).filter((p) => p !== null && p > 0);
   if (cleanPrices.length === 0) {
-    throw new Error('computeBuyFill: at least one positive price required');
+    throw new Error("computeBuyFill: at least one positive price required");
   }
   const liq = positiveOrNull(liquidityUsd);
   if (liq === null) {
@@ -101,22 +113,32 @@ export function computeBuyFill(prices, liquidityUsd, notional, config, solPrice)
   }
   const n = positiveOrNull(notional);
   if (n === null) {
-    throw new Error(`computeBuyFill: notional must be positive, got ${notional}`);
+    throw new Error(
+      `computeBuyFill: notional must be positive, got ${notional}`,
+    );
   }
   const sol = positiveOrNull(solPrice);
   if (sol === null) {
-    throw new Error(`computeBuyFill: solPrice must be positive, got ${solPrice}`);
+    throw new Error(
+      `computeBuyFill: solPrice must be positive, got ${solPrice}`,
+    );
   }
 
   const recent = cleanPrices.slice(-2);
   const basePrice = Math.max(...recent);
   const R = liq / 2;
   const slippageMult = 1 + config.paper.entrySlippageBps / 10000;
-  const impactMult = config.paper.modelConstantProductPriceImpact ? 1 + n / R : 1;
+  const impactMult = config.paper.modelConstantProductPriceImpact
+    ? 1 + n / R
+    : 1;
   const fillPrice = basePrice * slippageMult * impactMult;
   const qty = n / fillPrice;
 
-  const { ataRentUsd, networkFeeUsd, dexFeeUsd } = calculateCosts(config, sol, n);
+  const { ataRentUsd, networkFeeUsd, dexFeeUsd } = calculateCosts(
+    config,
+    sol,
+    n,
+  );
   const cashDebit = n + dexFeeUsd + networkFeeUsd + ataRentUsd;
   const costBasisUsd = n + dexFeeUsd + networkFeeUsd;
 
@@ -133,31 +155,45 @@ export function computeBuyFill(prices, liquidityUsd, notional, config, solPrice)
 }
 
 // Compute fill price and proceeds for a sell order
-export function computeSellFill(qtyToSell, prices, liquidityUsd, exitKind, config, solPrice) {
+export function computeSellFill(
+  qtyToSell,
+  prices,
+  liquidityUsd,
+  exitKind,
+  config,
+  solPrice,
+) {
   const qty = positiveOrNull(qtyToSell);
   if (qty === null) {
-    throw new Error(`computeSellFill: qtyToSell must be positive, got ${qtyToSell}`);
+    throw new Error(
+      `computeSellFill: qtyToSell must be positive, got ${qtyToSell}`,
+    );
   }
   if (!Array.isArray(prices) || prices.length === 0) {
-    throw new Error('computeSellFill: prices must be a non-empty array');
+    throw new Error("computeSellFill: prices must be a non-empty array");
   }
   const cleanPrices = prices.map(numOrNull).filter((p) => p !== null && p > 0);
   if (cleanPrices.length === 0) {
-    throw new Error('computeSellFill: at least one positive price required');
+    throw new Error("computeSellFill: at least one positive price required");
   }
   const liq = positiveOrNull(liquidityUsd);
   if (liq === null) {
-    throw new Error('computeSellFill: sell requires positive liquidity');
+    throw new Error("computeSellFill: sell requires positive liquidity");
   }
   const sol = positiveOrNull(solPrice);
   if (sol === null) {
-    throw new Error(`computeSellFill: solPrice must be positive, got ${solPrice}`);
+    throw new Error(
+      `computeSellFill: solPrice must be positive, got ${solPrice}`,
+    );
   }
 
   const recent = cleanPrices.slice(-2);
   const basePrice = Math.min(...recent);
 
-  const slippageBps = exitKind === 'STOP' ? config.paper.stopExitSlippageBps : config.paper.normalExitSlippageBps;
+  const slippageBps =
+    exitKind === "STOP"
+      ? config.paper.stopExitSlippageBps
+      : config.paper.normalExitSlippageBps;
   const slippageFactor = 1 - slippageBps / 10000;
   const grossValue = qty * basePrice * slippageFactor;
 
@@ -169,7 +205,10 @@ export function computeSellFill(qtyToSell, prices, liquidityUsd, exitKind, confi
   const dexFeeUsd = grossValue * (config.paper.dexFeeBps / 10000);
   const networkFeeUsd = config.paper.swapNetworkFeeSol * solPrice;
 
-  const proceeds = Math.max(0, grossValue * impactFactor - dexFeeUsd - networkFeeUsd);
+  const proceeds = Math.max(
+    0,
+    grossValue * impactFactor - dexFeeUsd - networkFeeUsd,
+  );
   const effectiveFillPrice = qty > 0 ? proceeds / qty : 0;
 
   return {
@@ -190,7 +229,9 @@ export function computeRugFill(costBasisRemainingUsd, config, solPrice) {
   }
   const sol = positiveOrNull(solPrice);
   if (sol === null) {
-    throw new Error(`computeRugFill: solPrice must be positive, got ${solPrice}`);
+    throw new Error(
+      `computeRugFill: solPrice must be positive, got ${solPrice}`,
+    );
   }
 
   const recoveryGrossUsd = config.rug.recoveryFractionOfRemainingCost * basis;
@@ -208,18 +249,25 @@ export function computeRugFill(costBasisRemainingUsd, config, solPrice) {
 }
 
 // Create and record a new open paper position into state
-export function openPosition(state, mint, pairAddress, fill, liquidityUsd, nowMs) {
-  if (!state || typeof state !== 'object' || !state.positions) {
-    throw new Error('openPosition: invalid state object');
+export function openPosition(
+  state,
+  mint,
+  pairAddress,
+  fill,
+  liquidityUsd,
+  nowMs,
+) {
+  if (!state || typeof state !== "object" || !state.positions) {
+    throw new Error("openPosition: invalid state object");
   }
-  if (typeof mint !== 'string' || mint.trim().length === 0) {
-    throw new Error('openPosition: mint must be a non-empty string');
+  if (typeof mint !== "string" || mint.trim().length === 0) {
+    throw new Error("openPosition: mint must be a non-empty string");
   }
-  if (typeof pairAddress !== 'string' || pairAddress.trim().length === 0) {
-    throw new Error('openPosition: pairAddress must be a non-empty string');
+  if (typeof pairAddress !== "string" || pairAddress.trim().length === 0) {
+    throw new Error("openPosition: pairAddress must be a non-empty string");
   }
-  if (!fill || typeof fill !== 'object') {
-    throw new Error('openPosition: fill must be an object');
+  if (!fill || typeof fill !== "object") {
+    throw new Error("openPosition: fill must be an object");
   }
 
   state.cashUsd -= fill.cashDebit;
@@ -247,22 +295,32 @@ export function openPosition(state, mint, pairAddress, fill, liquidityUsd, nowMs
 
 // Evaluate position against exit rules and return updated position copy and exit decision
 export function evaluateExits(position, obs, nowMs, config) {
-  if (!position || typeof position !== 'object') {
-    throw new Error('evaluateExits: position must be an object');
+  if (!position || typeof position !== "object") {
+    throw new Error("evaluateExits: position must be an object");
   }
-  if (!obs || typeof obs !== 'object') {
-    throw new Error('evaluateExits: obs must be an object');
+  if (!obs || typeof obs !== "object") {
+    throw new Error("evaluateExits: obs must be an object");
   }
-  if (typeof nowMs !== 'number' || !Number.isFinite(nowMs)) {
+  if (typeof nowMs !== "number" || !Number.isFinite(nowMs)) {
     throw new Error(`evaluateExits: nowMs must be finite number, got ${nowMs}`);
   }
   if (!config || !config.exits || !config.rug) {
-    throw new Error('evaluateExits: config must contain exits and rug settings');
+    throw new Error(
+      "evaluateExits: config must contain exits and rug settings",
+    );
+  }
+  const confirmTarget = config.rug.confirmObservationsForMissingLiquidity;
+  if (!Number.isInteger(confirmTarget) || confirmTarget < 1) {
+    throw new Error(
+      `evaluateExits: rug.confirmObservationsForMissingLiquidity must be an integer >= 1, got ${confirmTarget}`,
+    );
   }
 
   const p = {
     ...position,
-    priceHistory: Array.isArray(position.priceHistory) ? [...position.priceHistory] : [],
+    priceHistory: Array.isArray(position.priceHistory)
+      ? [...position.priceHistory]
+      : [],
   };
 
   const pairPresent = obs.pairPresent === true;
@@ -279,16 +337,16 @@ export function evaluateExits(position, obs, nowMs, config) {
       return {
         position: p,
         decision: {
-          type: 'EXIT',
-          reason: 'RUG',
+          type: "EXIT",
+          reason: "RUG",
           fraction: 1.0,
-          exitKind: 'RUG',
+          exitKind: "RUG",
         },
       };
     }
     return {
       position: p,
-      decision: { type: 'HOLD_UNKNOWN' },
+      decision: { type: "HOLD_UNKNOWN" },
     };
   }
 
@@ -299,22 +357,31 @@ export function evaluateExits(position, obs, nowMs, config) {
   if (liq < config.rug.triggerIfLiquidityUsdBelow) {
     return {
       position: p,
-      decision: { type: 'EXIT', reason: 'RUG', fraction: 1.0, exitKind: 'RUG' },
+      decision: { type: "EXIT", reason: "RUG", fraction: 1.0, exitKind: "RUG" },
     };
   }
   if (p.entryLiquidityUsd !== null && p.entryLiquidityUsd > 0) {
-    const liqDropPct = ((p.entryLiquidityUsd - liq) / p.entryLiquidityUsd) * 100;
+    const liqDropPct =
+      ((p.entryLiquidityUsd - liq) / p.entryLiquidityUsd) * 100;
     if (liqDropPct >= config.rug.triggerIfLiquidityDropFromEntryPercent) {
       return {
         position: p,
-        decision: { type: 'EXIT', reason: 'RUG', fraction: 1.0, exitKind: 'RUG' },
+        decision: {
+          type: "EXIT",
+          reason: "RUG",
+          fraction: 1.0,
+          exitKind: "RUG",
+        },
       };
     }
   }
-  if (pcM5 !== null && pcM5 <= config.rug.triggerIfPriceChange5mAtOrBelowPercent) {
+  if (
+    pcM5 !== null &&
+    pcM5 <= config.rug.triggerIfPriceChange5mAtOrBelowPercent
+  ) {
     return {
       position: p,
-      decision: { type: 'EXIT', reason: 'RUG', fraction: 1.0, exitKind: 'RUG' },
+      decision: { type: "EXIT", reason: "RUG", fraction: 1.0, exitKind: "RUG" },
     };
   }
 
@@ -322,7 +389,7 @@ export function evaluateExits(position, obs, nowMs, config) {
   if (price === null || price <= 0) {
     return {
       position: p,
-      decision: { type: 'HOLD_UNKNOWN' },
+      decision: { type: "HOLD_UNKNOWN" },
     };
   }
 
@@ -338,8 +405,8 @@ export function evaluateExits(position, obs, nowMs, config) {
     p.peakPrice = price;
   }
 
-  const gainPercent = ((price / p.entryPrice) - 1) * 100;
-  const peakGainPercent = ((p.peakPrice / p.entryPrice) - 1) * 100;
+  const gainPercent = (price / p.entryPrice - 1) * 100;
+  const peakGainPercent = (p.peakPrice / p.entryPrice - 1) * 100;
   const holdMinutes = (nowMs - p.entryAtMs) / 60000;
 
   // Priority walk
@@ -348,24 +415,31 @@ export function evaluateExits(position, obs, nowMs, config) {
 
   for (const item of priorityList) {
     // Treat stops as one combined group
-    if (item === 'HARD_STOP' || item === 'TRAILING_STOP' || item === 'BREAKEVEN_STOP') {
-      if (visitedGroups.has('STOPS')) continue;
-      visitedGroups.add('STOPS');
+    if (
+      item === "HARD_STOP" ||
+      item === "TRAILING_STOP" ||
+      item === "BREAKEVEN_STOP"
+    ) {
+      if (visitedGroups.has("STOPS")) continue;
+      visitedGroups.add("STOPS");
 
       let activeStopPrice = -Infinity;
       let stopReason = null;
 
       // Hard stop (gain <= hardStopPercent)
-      const hardStopPrice = p.entryPrice * (1 + config.exits.hardStopPercent / 100);
+      const hardStopPrice =
+        p.entryPrice * (1 + config.exits.hardStopPercent / 100);
       activeStopPrice = hardStopPrice;
-      stopReason = 'HARD_STOP';
+      stopReason = "HARD_STOP";
 
       // Breakeven stop
       if (peakGainPercent >= config.exits.breakevenStop.armAtGainPercent) {
-        const beStopPrice = p.entryPrice * (1 + config.exits.breakevenStop.lockAtGainPercent / 100);
+        const beStopPrice =
+          p.entryPrice *
+          (1 + config.exits.breakevenStop.lockAtGainPercent / 100);
         if (beStopPrice >= activeStopPrice) {
           activeStopPrice = beStopPrice;
-          stopReason = 'BREAKEVEN_STOP';
+          stopReason = "BREAKEVEN_STOP";
         }
       }
 
@@ -373,14 +447,16 @@ export function evaluateExits(position, obs, nowMs, config) {
       const trailDist = p.tp1Done
         ? config.exits.moonbag.trailDistanceFromPeakPercent
         : config.exits.trailingStop.trailDistanceFromPeakPercent;
-      const trailArmed = p.tp1Done || peakGainPercent >= config.exits.trailingStop.armAtGainPercent;
+      const trailArmed =
+        p.tp1Done ||
+        peakGainPercent >= config.exits.trailingStop.armAtGainPercent;
 
       if (trailArmed) {
         const trailStopPrice = p.peakPrice * (1 - trailDist / 100);
         // Ties resolve: trailing, then breakeven, then hard
         if (trailStopPrice >= activeStopPrice) {
           activeStopPrice = trailStopPrice;
-          stopReason = 'TRAILING_STOP';
+          stopReason = "TRAILING_STOP";
         }
       }
 
@@ -388,74 +464,75 @@ export function evaluateExits(position, obs, nowMs, config) {
         return {
           position: p,
           decision: {
-            type: 'EXIT',
+            type: "EXIT",
             reason: stopReason,
             fraction: 1.0,
-            exitKind: 'STOP',
+            exitKind: "STOP",
           },
         };
       }
       continue;
     }
 
-    if (item === 'MAX_HOLD') {
+    if (item === "MAX_HOLD") {
       if (holdMinutes >= config.exits.maxHoldMinutes) {
         return {
           position: p,
           decision: {
-            type: 'EXIT',
-            reason: 'MAX_HOLD',
+            type: "EXIT",
+            reason: "MAX_HOLD",
             fraction: 1.0,
-            exitKind: 'NORMAL',
+            exitKind: "NORMAL",
           },
         };
       }
       continue;
     }
 
-    if (item === 'STAGNANT_STOP') {
+    if (item === "STAGNANT_STOP") {
       const stag = config.exits.stagnantStop;
       const checkDue = holdMinutes >= stag.checkAfterMinutes;
       const gainLow = gainPercent < stag.minGainPercent;
-      const peakNotReached = peakGainPercent < stag.skipIfPeakGainAtOrAbovePercent;
+      const peakNotReached =
+        peakGainPercent < stag.skipIfPeakGainAtOrAbovePercent;
       if (checkDue && gainLow && peakNotReached && !p.tp1Done) {
         return {
           position: p,
           decision: {
-            type: 'EXIT',
-            reason: 'STAGNANT_STOP',
+            type: "EXIT",
+            reason: "STAGNANT_STOP",
             fraction: 1.0,
-            exitKind: 'NORMAL',
+            exitKind: "NORMAL",
           },
         };
       }
       continue;
     }
 
-    if (item === 'TAKE_PROFIT_2') {
+    if (item === "TAKE_PROFIT_2") {
       if (gainPercent >= config.exits.takeProfit2.gainPercent) {
         return {
           position: p,
           decision: {
-            type: 'EXIT',
-            reason: 'TAKE_PROFIT_2',
+            type: "EXIT",
+            reason: "TAKE_PROFIT_2",
             fraction: 1.0,
-            exitKind: 'NORMAL',
+            exitKind: "NORMAL",
           },
         };
       }
       continue;
     }
 
-    if (item === 'TAKE_PROFIT_1') {
+    if (item === "TAKE_PROFIT_1") {
       if (!p.tp1Done && gainPercent >= config.exits.takeProfit1.gainPercent) {
         return {
           position: p,
           decision: {
-            type: 'EXIT',
-            reason: 'TAKE_PROFIT_1',
+            type: "EXIT",
+            reason: "TAKE_PROFIT_1",
             fraction: config.exits.takeProfit1.sellPercentOfHoldings / 100,
-            exitKind: 'NORMAL',
+            exitKind: "NORMAL",
           },
         };
       }
@@ -465,24 +542,31 @@ export function evaluateExits(position, obs, nowMs, config) {
 
   return {
     position: p,
-    decision: { type: 'HOLD' },
+    decision: { type: "HOLD" },
   };
 }
 
 // Apply trade proceeds and position shrinkage or full closure to state
 export function closeFraction(state, position, fraction, fill, reason, nowIso) {
-  if (!state || typeof state !== 'object' || !state.positions) {
-    throw new Error('closeFraction: invalid state object');
+  if (!state || typeof state !== "object" || !state.positions) {
+    throw new Error("closeFraction: invalid state object");
   }
-  if (!position || typeof position !== 'object') {
-    throw new Error('closeFraction: invalid position object');
+  if (!position || typeof position !== "object") {
+    throw new Error("closeFraction: invalid position object");
+  }
+  if (!state.positions[position.mint]) {
+    throw new Error(
+      `closeFraction: no open position for mint ${position.mint}`,
+    );
   }
   const f = numOrNull(fraction);
   if (f === null || f <= 0 || f > 1.0) {
-    throw new Error(`closeFraction: fraction must be in (0, 1], got ${fraction}`);
+    throw new Error(
+      `closeFraction: fraction must be in (0, 1], got ${fraction}`,
+    );
   }
-  if (!fill || typeof fill !== 'object') {
-    throw new Error('closeFraction: fill must be an object');
+  if (!fill || typeof fill !== "object") {
+    throw new Error("closeFraction: fill must be an object");
   }
 
   const proceeds = fill.proceeds || 0;
@@ -494,7 +578,7 @@ export function closeFraction(state, position, fraction, fill, reason, nowIso) {
 
   const isFullClose = f >= 0.999999 || position.qtyRemaining <= 0;
 
-  if (isFullClose || reason === 'RUG') {
+  if (isFullClose || reason === "RUG") {
     state.cashUsd += position.rentLockedUsd;
     state.lockedAtaRentUsd -= position.rentLockedUsd;
     state.ataRentReleaseEvents += 1;
@@ -502,10 +586,12 @@ export function closeFraction(state, position, fraction, fill, reason, nowIso) {
     delete state.positions[position.mint];
   } else {
     // Partial close (e.g. TP1)
+    // The caller may pass an updated COPY (evaluateExits returns one), so store it back first
+    state.positions[position.mint] = position;
     position.qtyRemaining -= position.qtyRemaining * f;
     position.costBasisRemainingUsd -= costBasisSold;
 
-    if (reason === 'TAKE_PROFIT_1') {
+    if (reason === "TAKE_PROFIT_1") {
       position.tp1Done = true;
       if (fill.fillPrice && fill.fillPrice > 0) {
         position.peakPrice = fill.fillPrice;
@@ -523,8 +609,8 @@ export function closeFraction(state, position, fraction, fill, reason, nowIso) {
 
 // Calculate current cost-basis and marked equity points
 export function equityPoint(state) {
-  if (!state || typeof state !== 'object') {
-    throw new Error('equityPoint: invalid state object');
+  if (!state || typeof state !== "object") {
+    throw new Error("equityPoint: invalid state object");
   }
   let sumCostBasis = 0;
   let sumMarkValue = 0;
@@ -537,7 +623,8 @@ export function equityPoint(state) {
     }
   }
 
-  const equityCostBasisUsd = state.cashUsd + state.lockedAtaRentUsd + sumCostBasis;
+  const equityCostBasisUsd =
+    state.cashUsd + state.lockedAtaRentUsd + sumCostBasis;
   const equityMarkUsd = state.cashUsd + state.lockedAtaRentUsd + sumMarkValue;
 
   return {
@@ -548,8 +635,8 @@ export function equityPoint(state) {
 
 // Verify that ATA rent and cash accounting invariants strictly hold
 export function checkRentInvariant(state) {
-  if (!state || typeof state !== 'object') {
-    throw new Error('checkRentInvariant: invalid state object');
+  if (!state || typeof state !== "object") {
+    throw new Error("checkRentInvariant: invalid state object");
   }
 
   let expectedRent = 0;
@@ -573,7 +660,9 @@ export function checkRentInvariant(state) {
   }
 
   if (state.cashUsd < 0) {
-    throw new Error(`Cash balance invariant broken: cashUsd (${state.cashUsd}) < 0`);
+    throw new Error(
+      `Cash balance invariant broken: cashUsd (${state.cashUsd}) < 0`,
+    );
   }
 
   return true;

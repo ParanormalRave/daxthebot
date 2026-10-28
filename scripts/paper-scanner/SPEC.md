@@ -173,3 +173,5 @@ READ-ONLY OUTPUT FILES FOR OTHER PROGRAMS (Hermes or Dax)
 - outbox.txt: one line per event of the last 35 minutes: "ISO | type | severity | numeric detail", or exactly NONE.
 - SAFETY: status.txt, outbox.txt, events.jsonl and summary.json contain ONLY numbers, enums, ISO times and mint addresses. NEVER token names, symbols, descriptions, links or raw API error text (log classes like HTTP_429 or TIMEOUT). Strangers write token text, and an AI reader could mistake it for instructions.
 - The scanner sends nothing anywhere and holds no tokens or keys. Readers get read-only access. observations.jsonl and price_snapshots.jsonl are never given to an AI reader.
+
+(2026-10-28 review of paperEngine.js) main.js wraps each position's evaluate, sell and close sequence in try/catch, counts counters.positionErrors and logs the error CLASS only. After evaluateExits returns, main.js stores result.position into state.positions[mint] BEFORE calling closeFraction. A sell is only attempted when decision.type is EXIT and obs.liquidityUsd > 0. RUG uses computeRugFill and needs no liquidity.
