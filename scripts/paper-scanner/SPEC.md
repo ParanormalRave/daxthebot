@@ -130,3 +130,46 @@ MODULE main.js
 - SIGINT/SIGTERM: stop scheduling, wait for the in-flight cycle (force exit after 5 s), save state, exit 0.
 - --once works on an in-memory COPY of state. It writes no state and no logs, and prints what it would do.
 - Startup banner: config hash, mode, tradeSizeUsd, unknown keys, and a warning if the hash changed.
+
+=== ADDITIONS (pre-registered before the first run; later lines override earlier lines) ===
+
+BUILD ORDER ADDITION: alerts.js is built after dryConfig.js and before main.js.
+
+MARKET CONTEXT (descriptive only, NEVER used in filters, entries or exits)
+- http.js solPriceUsd() also returns priceChange.h1 and priceChange.h24 of the chosen WSOL pair (null if missing).
+- Every observation, snapshot and trade row also records: solPriceUsd, solChange1hPct, solChange24hPct, utcHour.
+- summarize.js adds descriptive tables: first half vs second half of the run (by time), and by SOL 24h change bucket (below -3%, -3% to +3%, above +3%). They cannot change the verdict.
+- Any idea found in these tables is a NEW hypothesis for a separate future run, never applied to this run.
+
+DATA FINDINGS (measured 2026-10-28, small samples)
+- DexScreener and GeckoTerminal agree within about 4% on liquidity and price for matched pools. FDV agrees less (one Meteora pool differed by about 22%). Filters use DexScreener numbers only. Never mix providers inside one rule.
+- Observations also record fdvGeckoUsd when the source is GeckoTerminal (record-only).
+- On pumpswap about 1 in 13 pairs returned missing or zero liquidity in one sample.
+- dexId spellings differ by provider. DexScreener: raydium, pumpswap, pumpfun, meteora, meteoradbc. GeckoTerminal: pump-fun, meteora-dbc, meteora-damm-v2, raydium-launchlab, stonkfun, bags-fm, letsbonk-fun. tradableDexIds uses DexScreener spellings. discovery.js classifies Gecko ids with a helper that lowercases and strips non-alphanumerics, FOR DEX IDS ONLY (never for addresses). Unknown ids are logged in unknownDexIdsSeen.
+
+RUG CONFIRMATION (overrides the RUG rule in the paperEngine.js section)
+- New config key rug.confirmObservationsForMissingLiquidity (integer 1 to 5, set to 2).
+- A reading is BAD when the pair is missing from a SUCCESSFUL response, or liquidity is null or 0. Each position keeps liqBadStreak: +1 on a bad reading, reset to 0 on a good one.
+- RUG fires when liqBadStreak >= confirmObservationsForMissingLiquidity.
+- While 0 < streak < confirm the decision is HOLD_UNKNOWN: no exit rule is evaluated (the price is unknown), no peak update, no fills. Count it in counters.transientBadLiquidityReadings.
+- A numeric liquidity > 0 below triggerIfLiquidityUsdBelow, or a drop >= triggerIfLiquidityDropFromEntryPercent, or priceChange.m5 <= triggerIfPriceChange5mAtOrBelowPercent still fires RUG IMMEDIATELY.
+
+PAPERENGINE INTERFACE DECISIONS
+- obs passed to evaluateExits: {pairPresent:boolean, priceUsd:number|null, liquidityUsd:number|null, priceChangeM5:number|null}. main.js builds it only from a SUCCESSFUL API response. On an API failure main.js does not call evaluateExits.
+- evaluateExits(position, obs, nowMs, config) does NOT mutate its inputs. It returns {position:updatedCopy, decision}, where decision is {type:'HOLD'} | {type:'HOLD_UNKNOWN'} | {type:'EXIT', reason, fraction, exitKind:'RUG'|'STOP'|'NORMAL'}. fraction is in (0,1] of the CURRENT qtyRemaining.
+- Pure functions: canAfford, computeBuyFill, computeSellFill, computeRugFill, evaluateExits, equityPoint, checkRentInvariant. State-mutating functions: openPosition, closeFraction. Neither kind does I/O or reads the clock.
+- Sells require a known liquidity above 0. The only exit that works without it is RUG.
+
+ALERTS AND ANNOTATIONS (descriptive only; never change parameters)
+- alerts.js, called by main.js every 5 minutes, appends one row per triggered condition to data/paper-scanner/events.jsonl: {ts, configHash, type, severity, detail, value, threshold}. The same type is not repeated within 60 minutes unless the value worsens.
+- Thresholds live in data/paper-scanner/alerts.json (a SEPARATE file from config.json, so editing it never changes the strategy fingerprint).
+- Conditions: scanner_stale, append_failures, api_failure_rate, feed_stalled, missing_data_rate, unknown_dex_id, signal_rate_shift, sol_move, graduation_delay_shift, transient_liquidity_rate.
+- Events are annotations only. They never pause trading, edit config, or change filters or exits. The only stops are the existing protocol stops.
+- summarize.js lists events by type and counts, and marks which closed trades overlapped an event.
+
+READ-ONLY OUTPUT FILES FOR OTHER PROGRAMS (Hermes or Dax)
+- main.js writes atomically (temp file, then rename) to data/paper-scanner/: status.txt every 60 s, outbox.txt after each alerts run, and summary.json through summarize-cli.
+- status.txt: plain "key: value" lines: generatedAt (ISO UTC), version, configHashShort (12 chars), cashUsd, equityUsd, openPositions, closedTrades, watchlistSize, lastDiscoveryAt, lastPositionCheckAt, appendFailures, apiFailurePercentLast15m, runStartedAt, maxTrades, maxDays.
+- outbox.txt: one line per event of the last 35 minutes: "ISO | type | severity | numeric detail", or exactly NONE.
+- SAFETY: status.txt, outbox.txt, events.jsonl and summary.json contain ONLY numbers, enums, ISO times and mint addresses. NEVER token names, symbols, descriptions, links or raw API error text (log classes like HTTP_429 or TIMEOUT). Strangers write token text, and an AI reader could mistake it for instructions.
+- The scanner sends nothing anywhere and holds no tokens or keys. Readers get read-only access. observations.jsonl and price_snapshots.jsonl are never given to an AI reader.

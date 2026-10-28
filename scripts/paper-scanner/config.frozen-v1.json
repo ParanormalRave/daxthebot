@@ -1,0 +1,146 @@
+{
+  "strategyName": "dax-paper-scanner",
+  "version": "1.4.0-paper",
+  "mode": "PAPER_ONLY",
+  "paths": {
+    "stateFile": "data/paper-scanner/state.json",
+    "tradesLog": "data/paper-scanner/paper_trades.jsonl",
+    "observationsLog": "data/paper-scanner/observations.jsonl",
+    "snapshotsLog": "data/paper-scanner/price_snapshots.jsonl",
+    "rugCheckSamplesLog": "data/paper-scanner/rugcheck_samples.jsonl",
+    "summaryFile": "data/paper-scanner/summary.json"
+  },
+  "polling": {
+    "discoveryIntervalSec": 60,
+    "positionCheckIntervalSec": 15,
+    "watchlistTickSec": 15,
+    "httpTimeoutMs": 8000,
+    "backoffOn429Sec": 20
+  },
+  "rateLimits": {
+    "geckoTerminalMaxReqPerMin": 10,
+    "geckoTerminalDelayBetweenPagesMs": 2500,
+    "dexScreenerProfilesMaxReqPerMin": 50,
+    "dexScreenerPairsMaxReqPerMin": 250,
+    "rugCheckMaxReqPerMin": 20,
+    "rugCheckDelayBetweenCallsMs": 2500
+  },
+  "discovery": {
+    "geckoTerminalNewPools": {
+      "enabled": true,
+      "url": "https://api.geckoterminal.com/api/v2/networks/solana/new_pools",
+      "pages": 3
+    },
+    "dexScreenerProfiles": {
+      "enabled": true,
+      "url": "https://api.dexscreener.com/token-profiles/latest/v1"
+    },
+    "dexScreenerPairsBatchUrl": "https://api.dexscreener.com/tokens/v1/solana/",
+    "dexScreenerBatchSize": 30
+  },
+ "watchlist": {
+  "launchpadTtlMinutes": 180,
+  "ammCandidateTtlMinutes": 60,
+  "pollIntervalSecByState": {
+    "launchpadFirst60Min": 60,
+    "launchpadAfter60Min": 300,
+    "ammCandidate": 30
+  },
+  "snapshotOffsetsMinutes": [1, 2, 3, 5, 10, 15, 20, 30, 45, 60, 90, 120, 150, 180],
+  "maxTrackedConcurrently": 3000,
+  "minReserveUsdToTrack": 1500,
+  "countDroppedPools": true,
+  "launchpadDexIdsRecordOnly": ["pump-fun", "raydium-launchlab", "stonkfun", "bags-fm", "letsbonk-fun", "meteora-dbc"]
+},
+  "entryFilter": {
+    "chainId": "solana",
+    "tradableDexIds": ["raydium", "pumpswap", "meteora"],
+    "logUnknownDexIds": true,
+    "pairAgeMinutes": { "min": 3, "max": 45 },
+    "liquidityUsd": { "min": 12000, "max": 85000 },
+    "fdvUsd": { "min": 25000, "max": 180000 },
+    "maxFdvToLiquidityRatio": 4.5,
+    "minVolume1hToLiquidityRatio": 1.2,
+    "volumeUsd": { "min5m": 4000, "min1h": 15000 },
+    "minBuys5m": 35,
+    "minBuyToSellRatio5m": 1.4,
+    "priceChangePercent": { "min5m": 4.0, "max5m": 35.0, "min1h": -15.0, "max1h": 150.0 },
+    "rejectOnNull": true
+  },
+  "recordOnlyFields": [
+    "hasSocialLinks",
+    "hasWebsite",
+    "hasTwitter",
+    "isCtoFlag",
+    "addressEndsWithPump",
+    "discoverySource",
+    "launchpadDexId"
+  ],
+  "security": {
+    "rugCheckReportUrlTemplate": "https://api.rugcheck.xyz/v1/tokens/{mint}/report",
+    "onApiFailure": "reject_and_log",
+    "unknownAuthorityAction": "reject_and_log",
+    "requireMintAuthorityRevoked": true,
+    "requireFreezeAuthorityRevoked": true,
+    "excludePoolAndAmmAccountsFromHolders": true,
+    "maxTop10HoldersPercent": 28.0,
+    "maxSingleHolderPercent": 6.0,
+    "minLpLockedOrBurnedPercent": 0.0,
+    "saveFirstNRawReports": 25
+  },
+  "paper": {
+    "startingCashUsd": 5.0,
+    "tradeSizeUsd": 1.7,
+    "maxConcurrentPositions": 2,
+    "minSolGasBufferUsd": 0.6,
+    "solPriceUsdFallback": 180.0,
+    "ataRentSol": 0.00203928,
+    "swapNetworkFeeSol": 0.00015,
+    "dexFeeBps": 25,
+    "entrySlippageBps": 150,
+    "normalExitSlippageBps": 150,
+    "stopExitSlippageBps": 350,
+    "modelConstantProductPriceImpact": true,
+    "fillModel": "worse_of_last_two_observed_prices"
+  },
+  "rug": {
+    "triggerIfPairMissing": true,
+    "triggerIfLiquidityNullOrZero": true,
+    "triggerIfLiquidityUsdBelow": 2000,
+    "triggerIfLiquidityDropFromEntryPercent": 70.0,
+    "triggerIfPriceChange5mAtOrBelowPercent": -80.0,
+    "recoveryFractionOfRemainingCost": 0.05,
+    "confirmObservationsForMissingLiquidity": 2
+  },
+  "exits": {
+    "exitPriority": [
+      "RUG",
+      "HARD_STOP",
+      "TRAILING_STOP",
+      "BREAKEVEN_STOP",
+      "MAX_HOLD",
+      "STAGNANT_STOP",
+      "TAKE_PROFIT_2",
+      "TAKE_PROFIT_1"
+    ],
+    "hardStopPercent": -28.0,
+    "breakevenStop": { "armAtGainPercent": 40.0, "lockAtGainPercent": 5.0 },
+    "stagnantStop": { "checkAfterMinutes": 12, "minGainPercent": 15.0, "skipIfPeakGainAtOrAbovePercent": 40.0 },
+    "trailingStop": { "armAtGainPercent": 65.0, "trailDistanceFromPeakPercent": 20.0, "mode": "relative_to_peak_price" },
+    "moonbag": { "resetPeakAtTp1": true, "trailDistanceFromPeakPercent": 30.0 },
+    "maxHoldMinutes": 45,
+    "takeProfit1": { "gainPercent": 100.0, "sellPercentOfHoldings": 80.0 },
+    "takeProfit2": { "gainPercent": 250.0, "sellPercentOfHoldings": 100.0 }
+  },
+ "protocol": {
+    "locked": true,
+    "maxTrades": 50,
+    "maxDays": 7,
+    "minTradesForVerdict": 30,
+    "minExpectancyUsdPerTrade": 0.12,
+    "minProfitFactor": 1.35,
+    "maxRugRatePercent": 20,
+    "minBalanceFloorUsd": 3.00,
+   "maxMissingDataRejectRatePercent": 50
+ }
+}
