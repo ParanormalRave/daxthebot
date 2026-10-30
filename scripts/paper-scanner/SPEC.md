@@ -175,3 +175,26 @@ READ-ONLY OUTPUT FILES FOR OTHER PROGRAMS (Hermes or Dax)
 - The scanner sends nothing anywhere and holds no tokens or keys. Readers get read-only access. observations.jsonl and price_snapshots.jsonl are never given to an AI reader.
 
 (2026-10-28 review of paperEngine.js) main.js wraps each position's evaluate, sell and close sequence in try/catch, counts counters.positionErrors and logs the error CLASS only. After evaluateExits returns, main.js stores result.position into state.positions[mint] BEFORE calling closeFraction. A sell is only attempted when decision.type is EXIT and obs.liquidityUsd > 0. RUG uses computeRugFill and needs no liquidity.
+
+SECURITY.JS DECISIONS (2026-10-28 after first review; later lines override earlier lines)
+- checkSecurity(report, config, context) where context is optional {dexId, pairAddress} supplied by main.js from the chosen DexScreener pair. details.dexId = context.dexId when it is a non-empty string, else a report-derived value, else null.
+- The traded market is the report.markets entry whose pubkey equals context.pairAddress (exact, case-sensitive). If there is no pairAddress or no match: lpLockedPercent and marketType are null and details.marketMatched=false. Never pick the best-looking market.
+- details also includes authorityPaths {mint, freeze} ("token.<field>", "<field>" or "missing") and marketMatched. Modules never write NOTES.md; the human records findings there after reading the saved raw reports.
+- security.excludePoolAndAmmAccountsFromHolders is honored: when it is not true, nothing is excluded.
+- Raw-report counter: state.counters.rugCheckRawReportsSaved. shouldSaveRaw reads it and main.js bumps it with state.bump after each logRugSample.
+- Reason names: mint_authority_active, mint_authority_unknown, freeze_authority_active, freeze_authority_unknown, holders_unknown, top10_holders_too_high, single_holder_too_high, lp_locked_too_low, lp_locked_unknown, security_parse_error.
+- Pending real-data check: what an empty-string authority means, whether pct is a percent, and which market field names hold the pool's token accounts.
+
+SECURITY.JS CONSOLIDATED SPEC (2026-10-30; supersedes all earlier security.js notes; later lines override earlier lines)
+- Signature: checkSecurity(report, config, context). context is optional; only a plain non-null non-array object is used, anything else is ignored and never throws.
+- details always has these fields (defaults set in emptyDetails): mintAuthorityState null, freezeAuthorityState null, top10Percent null, maxHolderPercent null, lpLockedPercent null, marketType null, dexId null, marketMatched false, authorityPaths {mint:'missing', freeze:'missing'}, recordOnly {rugged:null, scoreNormalised:null, totalHolders:null, insidersDetected:null}.
+- details.dexId = context.dexId trimmed when it is a non-empty string, else a report-derived value, else null. It is set BEFORE the report/config validation, so security_parse_error results carry it too. On security_parse_error every other field stays at its default.
+- The traded market is the report.markets entry whose pubkey equals context.pairAddress (exact, case-sensitive, trimmed). No pairAddress or no match: lpLockedPercent null, marketType null, marketMatched false. Never pick the "best looking" market.
+- details.authorityPaths = {mint, freeze}: the path findAuthority used ("token.<field>", "<field>" or "missing").
+- Holder exclusion is honored only when config.security.excludePoolAndAmmAccountsFromHolders === true. Compare BOTH holder.address and holder.owner with the market account addresses (a pool's own token account appears as a holder whose OWNER equals the market pubkey).
+- Authority: null = revoked, non-empty string = active, ""/missing = unknown (rejected under reject_and_log). In real data both authorities were JSON null at the top level and under report.token.
+- details.recordOnly is RECORD-ONLY and never adds a reason or changes passed. rugged = report.rugged if it is a boolean, else null. scoreNormalised = numOrNull(report.score_normalised). totalHolders = numOrNull(report.totalHolders). insidersDetected = report.graphInsidersDetected if it is a boolean or a finite number, else null. It is NOT related to config.recordOnlyFields (that array belongs to discovery.js).
+- lpLockedPct is 0 for markets without LP tokens (meteoraDlmm, orca, some raydium_clmm). minLpLockedOrBurnedPercent stays 0 for this run; lpLockedPercent and marketType are logged for analysis only.
+- shouldSaveRaw reads state.counters.rugCheckRawReportsSaved; main.js bumps it after each logRugSample.
+- Reason names: mint_authority_active, mint_authority_unknown, freeze_authority_active, freeze_authority_unknown, holders_unknown, top10_holders_too_high, single_holder_too_high, lp_locked_too_low, lp_locked_unknown, security_parse_error.
+- main.js (not written yet) MUST call checkSecurity(report, config, {dexId: pair.dexId, pairAddress: pair.pairAddress}).
