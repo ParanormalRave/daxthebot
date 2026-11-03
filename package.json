@@ -7,7 +7,12 @@
     "start": "node index.js",
     "check": "node check-syntax.js",
     "predeploy": "node check-syntax.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "paper": "node scripts/paper-scanner/main.js",
+    "paper:selftest": "node scripts/paper-scanner/main.js --selftest",
+    "paper:dry-config": "node scripts/paper-scanner/main.js --dry-config",
+    "paper:once": "node scripts/paper-scanner/main.js --once",
+    "paper:summarize": "node scripts/paper-scanner/summarize-cli.js"
   },
   "keywords": [],
   "author": "",
