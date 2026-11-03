@@ -60,6 +60,8 @@ import {
   getRealPositions,
   previewBuy,
 } from "./lib/realTrading.js";
+import { getScannerStatusText } from "./lib/scannerStatus.js";
+import { startScannerWatch } from "./lib/scannerWatch.js";
 
 export const bot = new Telegraf(process.env.BOT_TOKEN, {
   handlerTimeout: 60_000,
@@ -440,6 +442,15 @@ bot.command("balance", async (ctx) => {
 
 bot.command("positions", showPositions);
 bot.command("sell", showPositions);
+
+bot.command("scanner", async (ctx) => {
+  if (ctx.from?.id !== OwnerId) return;
+  await ctx.reply(getScannerStatusText());
+});
+
+startScannerWatch((text) => bot.telegram.sendMessage(OwnerId, text), {
+  enabled: process.env.SCANNER_WATCH !== "off",
+});
 
 bot.command("chat", async (ctx) => {
   await setMode(ctx.chat.id, "chat");
